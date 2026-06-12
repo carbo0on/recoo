@@ -38,6 +38,7 @@ BANNER = r"""
  \____/\___/\___/\____/\____/
 
  recoo · modular recon automation · v{ver}
+ made by cataract
 """
 
 
