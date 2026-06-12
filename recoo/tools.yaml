@@ -1,0 +1,407 @@
+# =====================================================================
+# recoo default tool registry
+# =====================================================================
+# Every recon tool is one entry below. To control what runs:
+#   * flip `enabled: true|false` here, or in your own config.yaml, or
+#   * use the CLI:  --enable, --disable, --only, --stages, --skip-stages
+#
+# Tools whose external binary is not installed are skipped automatically,
+# so you can enable everything and recoo only runs what you actually have.
+#
+# Placeholders usable in `cmd`:
+#   {input}  consumed canonical artifact file   {item} one line (mode: each)
+#   {output} this tool's output file            {domain} single -d target
+#   {threads} {resolvers} {wordlist_dns} {wordlist_content}
+#   {wordlist_params} {wordlist_perms} {github_token} {workspace}
+# ---------------------------------------------------------------------
+
+settings:
+  threads: 40
+  timeout: 1800
+
+tools:
+
+  # ============================ PHASE 1 ============================
+  # Seed / root asset discovery. Off by default: heavy and often needs
+  # API keys. Turn on for wide-scope targets.
+  asnmap:
+    stage: seeds
+    desc: "Map ASN -> CIDR ranges owned by the target"
+    bin: asnmap
+    mode: each
+    input: seeds
+    cmd: "asnmap -d {item} -silent"
+    output: "seeds/asnmap_{item}.txt"
+    produces: cidrs
+    enabled: false
+    tags: [seed, optional]
+
+  # ============================ PHASE 2 ============================
+  # Subdomain enumeration. Passive sources are on by default.
+  subfinder:
+    stage: subdomains
+    desc: "Passive subdomain enumeration (many sources)"
+    bin: subfinder
+    input: seeds
+    cmd: "subfinder -dL {input} -all -recursive -silent"
+    output: "subs/subfinder.txt"
+    produces: subs_all
+    enabled: true
+    tags: [passive]
+
+  amass_passive:
+    stage: subdomains
+    desc: "Passive enum via amass (slower, broad)"
+    bin: amass
+    input: seeds
+    cmd: "amass enum -passive -df {input} -silent"
+    output: "subs/amass.txt"
+    produces: subs_all
+    enabled: false
+    tags: [passive, slow]
+
+  crtsh:
+    stage: subdomains
+    desc: "Certificate Transparency via crt.sh"
+    bins: [curl, jq]
+    mode: each
+    input: seeds
+    cmd: >-
+      curl -s "https://crt.sh/?q=%25.{item}&output=json"
+      | jq -r '.[].name_value' 2>/dev/null
+      | sed 's/\*\.//g' | sort -u
+    output: "subs/crtsh_{item}.txt"
+    produces: subs_all
+    enabled: true
+    tags: [passive]
+
+  chaos:
+    stage: subdomains
+    desc: "ProjectDiscovery Chaos dataset (needs CHAOS_KEY)"
+    bin: chaos
+    mode: each
+    input: seeds
+    cmd: "chaos -d {item} -silent"
+    output: "subs/chaos_{item}.txt"
+    produces: subs_all
+    enabled: false
+    tags: [passive, needs-key]
+
+  github_subdomains:
+    stage: subdomains
+    desc: "Subdomains scraped from GitHub (needs token)"
+    bin: github-subdomains
+    mode: each
+    input: seeds
+    cmd: "github-subdomains -d {item} -t {github_token}"
+    output: "subs/github_{item}.txt"
+    produces: subs_all
+    enabled: false
+    tags: [passive, needs-key]
+
+  puredns_brute:
+    stage: subdomains
+    desc: "Active DNS brute-force with a wordlist"
+    bins: [puredns]
+    mode: each
+    input: seeds
+    cmd: "puredns bruteforce {wordlist_dns} {item} -r {resolvers} -q"
+    output: "subs/brute_{item}.txt"
+    produces: subs_all
+    enabled: false
+    tags: [active, slow, needs-wordlist]
+
+  # ============================ PHASE 2.3 =========================
+  permutations:
+    stage: permutations
+    desc: "Generate + resolve subdomain permutations"
+    bins: [gotator, puredns]
+    input: subs_all
+    cmd: >-
+      gotator -sub {input} -perm {wordlist_perms} -depth 1 -numbers 5 -silent
+      | puredns resolve -r {resolvers} -q
+    output: "subs/permutations.txt"
+    produces: subs_all
+    enabled: false
+    tags: [active, slow, needs-wordlist]
+
+  # ============================ PHASE 3 ============================
+  dnsx_resolve:
+    stage: resolve
+    desc: "Resolve subdomains (A/AAAA/CNAME)"
+    bin: dnsx
+    input: subs_all
+    cmd: "dnsx -l {input} -silent"
+    output: "subs/dnsx.txt"
+    produces: resolved
+    enabled: true
+    tags: [resolve]
+
+  dnsx_records:
+    stage: resolve
+    desc: "Full DNS records dump (for takeover analysis)"
+    bin: dnsx
+    input: subs_all
+    cmd: "dnsx -l {input} -a -aaaa -cname -resp -silent"
+    output: "subs/dnsx_records.txt"
+    enabled: true
+    tags: [resolve]
+
+  puredns_resolve:
+    stage: resolve
+    desc: "High-accuracy resolution with wildcard filtering"
+    bin: puredns
+    input: subs_all
+    cmd: "puredns resolve {input} -r {resolvers} -q"
+    output: "subs/puredns.txt"
+    produces: resolved
+    enabled: false
+    tags: [resolve, needs-wordlist]
+
+  subzy:
+    stage: resolve
+    desc: "Subdomain takeover detection"
+    bin: subzy
+    input: resolved
+    cmd: "subzy run --targets {input} --hide_fails"
+    output: "findings/takeover_subzy.txt"
+    enabled: true
+    tags: [takeover]
+
+  nuclei_takeover:
+    stage: resolve
+    desc: "Takeover detection via nuclei templates"
+    bin: nuclei
+    input: resolved
+    cmd: "nuclei -l {input} -t takeovers/ -silent"
+    output: "findings/takeover_nuclei.txt"
+    enabled: false
+    tags: [takeover]
+
+  # ============================ PHASE 4 ============================
+  httpx:
+    stage: probe
+    desc: "HTTP probing + tech/title/status/cdn fingerprint (JSON)"
+    bin: httpx
+    input: resolved
+    cmd: >-
+      httpx -l {input} -silent -sc -title -tech-detect -location
+      -cdn -ip -web-server -json
+    output: "hosts/httpx.json"
+    enabled: true
+    tags: [probe]
+
+  naabu:
+    stage: ports
+    desc: "Port scan (top 1000) on resolved hosts"
+    bin: naabu
+    input: resolved
+    cmd: "naabu -l {input} -top-ports 1000 -silent"
+    output: "hosts/ports.txt"
+    produces: ports
+    enabled: false
+    tags: [active, noisy, slow]
+
+  # ============================ PHASE 5 ============================
+  katana:
+    stage: crawl
+    desc: "JS-aware live crawler"
+    bin: katana
+    input: live
+    cmd: "katana -list {input} -jc -kf all -d 3 -c {threads} -silent"
+    output: "urls/katana.txt"
+    produces: urls_all
+    enabled: true
+    tags: [crawl]
+
+  gau:
+    stage: crawl
+    desc: "Historical URLs from web archives"
+    bin: gau
+    mode: each
+    input: seeds
+    cmd: "gau --threads {threads} {item}"
+    output: "urls/gau_{item}.txt"
+    produces: urls_all
+    enabled: true
+    tags: [passive]
+
+  waybackurls:
+    stage: crawl
+    desc: "URLs from the Wayback Machine"
+    bin: waybackurls
+    mode: each
+    input: seeds
+    cmd: "waybackurls {item}"
+    output: "urls/wayback_{item}.txt"
+    produces: urls_all
+    enabled: true
+    tags: [passive]
+
+  gospider:
+    stage: crawl
+    desc: "Additional crawler (gospider)"
+    bin: gospider
+    input: live
+    cmd: "gospider -S {input} -t {threads} -d 2 -q --no-redirect"
+    output: "urls/gospider.txt"
+    produces: urls_all
+    enabled: false
+    tags: [crawl]
+
+  ffuf_content:
+    stage: crawl
+    desc: "Directory/file fuzzing on the primary target"
+    bin: ffuf
+    mode: none
+    cmd: >-
+      ffuf -u https://{domain}/FUZZ -w {wordlist_content}
+      -mc all -fc 404 -of json -o {output} -s
+    output: "urls/ffuf.json"
+    enabled: false
+    tags: [active, noisy, needs-wordlist]
+
+  # ====================== PHASE 5.4 (built-in) ====================
+  url_classify:
+    stage: urls
+    desc: "Classify URLs: clean / with-params / js (built-in)"
+    builtin: process_urls
+    enabled: true
+    tags: [builtin]
+
+  # ============================ PHASE 6 ============================
+  jsluice:
+    stage: js
+    desc: "Extract URLs/paths/secrets from JS via AST (jsluice)"
+    bins: [jsluice, curl]
+    mode: each
+    input: js_urls
+    cmd: "curl -s -m 20 {item} | jsluice urls"
+    output: "js/jsluice_{item}.txt"
+    produces: urls_all
+    enabled: true
+    tags: [js]
+
+  linkfinder:
+    stage: js
+    desc: "Endpoint extraction from JS (LinkFinder)"
+    bins: [linkfinder]
+    mode: each
+    input: js_urls
+    cmd: "linkfinder -i {item} -o cli"
+    output: "js/linkfinder_{item}.txt"
+    enabled: false
+    tags: [js]
+
+  js_secrets:
+    stage: js
+    desc: "Regex secret scan across live JS (built-in)"
+    builtin: secrets_grep
+    bins: [curl]
+    enabled: true
+    tags: [js, builtin]
+
+  source_maps:
+    stage: js
+    desc: "Detect exposed .map files -> source recovery (built-in)"
+    builtin: source_maps
+    bin: httpx
+    enabled: true
+    tags: [js, builtin]
+
+  trufflehog_js:
+    stage: js
+    desc: "Verified secret scan over downloaded JS (trufflehog)"
+    bin: trufflehog
+    mode: none
+    cmd: "trufflehog filesystem {workspace}/js --only-verified --no-update"
+    output: "findings/trufflehog_js.txt"
+    enabled: false
+    tags: [js, slow]
+
+  # ============================ PHASE 7 ============================
+  arjun:
+    stage: params
+    desc: "Hidden HTTP parameter discovery"
+    bin: arjun
+    input: live
+    cmd: "arjun -i {input} -oT {output} -t {threads}"
+    output: "params/arjun.txt"
+    produces: params_all
+    stdout: false
+    enabled: true
+    tags: [params]
+
+  # ============================ PHASE 8 ============================
+  api_surface:
+    stage: apis
+    desc: "Probe common API/docs/secret paths (built-in)"
+    builtin: api_docs
+    bin: httpx
+    enabled: true
+    tags: [api, builtin]
+
+  graphw00f:
+    stage: apis
+    desc: "GraphQL engine fingerprint"
+    bin: graphw00f
+    mode: each
+    input: live
+    cmd: "graphw00f -t {item} -d"
+    output: "findings/graphw00f_{item}.txt"
+    enabled: false
+    tags: [api, slow]
+
+  # ============================ PHASE 9 ============================
+  cloud_enum:
+    stage: cloud
+    desc: "Cloud storage bucket discovery (S3/GCS/Azure)"
+    bin: cloud_enum
+    mode: each
+    input: seeds
+    cmd: "cloud_enum -k {item} --disable-azure --quickscan -l {output}"
+    output: "findings/cloud_{item}.txt"
+    stdout: false
+    enabled: false
+    tags: [cloud, slow]
+
+  # ============================ PHASE 10 ===========================
+  github_dorks:
+    stage: osint
+    desc: "Scan org GitHub for verified secrets (trufflehog)"
+    bin: trufflehog
+    mode: each
+    input: seeds
+    cmd: "trufflehog github --org={item} --only-verified --no-update"
+    output: "findings/github_secrets_{item}.txt"
+    enabled: false
+    tags: [osint, needs-key, slow]
+
+  # ============================ PHASE 11 ===========================
+  gf_triage:
+    stage: triage
+    desc: "Pattern-based URL triage with gf (built-in)"
+    builtin: gf_patterns
+    bin: gf
+    enabled: true
+    tags: [triage, builtin]
+
+  nuclei:
+    stage: triage
+    desc: "Exposures/misconfig/CVE scan (signal, not noise)"
+    bin: nuclei
+    input: live
+    cmd: >-
+      nuclei -l {input} -t exposures/ -t misconfiguration/ -t takeovers/
+      -severity medium,high,critical -silent
+    output: "findings/nuclei.txt"
+    enabled: true
+    tags: [triage]
+
+  # ============================ PHASE 12 ===========================
+  monitor:
+    stage: monitoring
+    desc: "Snapshot + diff key artifacts, notify on new (built-in)"
+    builtin: monitor_diff
+    enabled: false
+    tags: [monitoring, builtin]

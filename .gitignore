@@ -1,0 +1,15 @@
+# recoo output workspaces
+recoo-output/
+*-output/
+output/
+
+# local config + wordlists (keep your own out of git)
+config.yaml
+wordlists/*.txt
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
