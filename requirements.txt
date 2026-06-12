@@ -1,0 +1,3 @@
+# recoo has a single Python dependency; everything else is external
+# recon binaries installed via install.sh.
+PyYAML>=5.3

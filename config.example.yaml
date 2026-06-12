@@ -1,0 +1,47 @@
+# =====================================================================
+# recoo user config  —  copy to config.yaml and pass with -c config.yaml
+# =====================================================================
+# Anything here overrides the packaged defaults in recoo/tools.yaml.
+# This is the easiest way to keep a permanent, per-target tool selection.
+
+settings:
+  threads: 50
+  timeout: 1800                       # per-tool timeout in seconds
+
+  # Wordlists / resolvers (point these at your own copies).
+  resolvers: wordlists/resolvers.txt
+  wordlist_dns: wordlists/dns.txt
+  wordlist_content: wordlists/content.txt
+  wordlist_params: wordlists/params.txt
+  wordlist_perms: wordlists/permutations.txt
+
+  # API tokens used by certain tools (leave blank to skip those).
+  github_token: ""
+
+  # gf patterns run during triage.
+  gf_patterns: [ssrf, redirect, idor, xss, lfi, sqli, rce, ssti]
+
+  notify: false                       # pipe new findings to `notify`
+
+# ---------------------------------------------------------------------
+# Per-tool overrides. Two forms are accepted:
+#
+#   toolname: false            # shorthand: just turn it off
+#   toolname:                  # or override any field(s)
+#     enabled: true
+#     timeout: 600
+#     cmd: "..."               # even swap the command if you like
+# ---------------------------------------------------------------------
+tools:
+  # turn the heavier / key-dependent tools on for a deep run:
+  amass_passive: false
+  puredns_brute: false
+  permutations: false
+  naabu: false
+  graphw00f: false
+  cloud_enum: false
+
+  # example: keep nuclei but give it a longer leash
+  nuclei:
+    enabled: true
+    timeout: 3600
