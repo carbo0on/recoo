@@ -107,19 +107,31 @@ def _arrow_ui(tools) -> bool:
 # --------------------------------------------------------------------- #
 
 def _numbered_ui(tools) -> bool:
+    """Fallback checklist: enabled tools shown first, numbered, so the
+    common 'pick a profile then remove a few tools' flow is one step.
+    """
     while True:
+        # Order: tools that WILL run first, then the rest (continuous numbers).
+        ordered = ([t for t in tools if t.enabled] +
+                   [t for t in tools if not t.enabled])
+        on = sum(t.enabled for t in tools)
+
         print(f"\n{C.BOLD}recoo · select tools{C.RESET}  "
-              f"({sum(t.enabled for t in tools)}/{len(tools)} enabled)\n")
-        last_stage = None
-        for i, t in enumerate(tools, 1):
-            if t.stage != last_stage:
-                print(f"{C.BLUE}▌ {t.stage}{C.RESET}")
-                last_stage = t.stage
+              f"{C.GREEN}{on}{C.RESET}/{len(tools)} will run\n")
+        print(f"{C.GREEN}── will run (type a number to REMOVE) "
+              f"──────────────────{C.RESET}")
+        shown_divider = False
+        for i, t in enumerate(ordered, 1):
+            if not t.enabled and not shown_divider:
+                print(f"{C.GREY}── available (type a number to ADD) "
+                      f"───────────────{C.RESET}")
+                shown_divider = True
             box = (f"{C.GREEN}[x]{C.RESET}" if t.enabled
                    else f"{C.GREY}[ ]{C.RESET}")
-            print(f"  {C.DIM}{i:>2}{C.RESET} {box} {t.name:<22} "
-                  f"{C.DIM}{t.desc}{C.RESET}")
-        print(f"\n{C.DIM}toggle: numbers (e.g. 3,5,7) · 'a' all · 'n' none · "
+            num = (f"{C.CYAN}{i:>2}{C.RESET}" if t.enabled
+                   else f"{C.GREY}{i:>2}{C.RESET}")
+            print(f"  {num} {box} {t.name:<22} {C.DIM}{t.desc}{C.RESET}")
+        print(f"\n{C.DIM}numbers toggle (e.g. 3,5) · 'a' all · 'n' none · "
               f"ENTER run · 'q' quit{C.RESET}")
         try:
             choice = input("recoo> ").strip().lower()
@@ -138,5 +150,6 @@ def _numbered_ui(tools) -> bool:
                 t.enabled = False
             continue
         for part in choice.replace(" ", ",").split(","):
-            if part.isdigit() and 1 <= int(part) <= len(tools):
-                tools[int(part) - 1].enabled ^= True
+            if part.isdigit() and 1 <= int(part) <= len(ordered):
+                ordered[int(part) - 1].enabled ^= True
+
