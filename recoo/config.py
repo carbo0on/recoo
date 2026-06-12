@@ -51,6 +51,7 @@ DEFAULT_SETTINGS: Dict[str, object] = {
 class Config:
     settings: Dict[str, object] = field(default_factory=dict)
     tools: List[Tool] = field(default_factory=list)
+    profiles: Dict[str, dict] = field(default_factory=dict)
 
     def by_name(self, name: str) -> Optional[Tool]:
         for t in self.tools:
@@ -98,8 +99,36 @@ def load(user_config: Optional[str] = None,
             elif isinstance(override, dict):
                 tool_defs[name].update(override)
 
+    profiles: Dict[str, dict] = dict(reg.get("profiles", {}) or {})
+    if user_config:
+        user = _load_yaml(Path(user_config))
+        for name, override in (user.get("profiles", {}) or {}).items():
+            profiles[name] = override
+
     tools = [Tool.from_dict(name, d) for name, d in tool_defs.items()]
-    return Config(settings=settings, tools=tools)
+    return Config(settings=settings, tools=tools, profiles=profiles)
+
+
+def apply_profile(cfg: Config, profile: str) -> None:
+    """Enable exactly the tools listed in the named depth profile.
+
+    A profile is a curated, depth-based slice of the pipeline (fast /
+    medium / deep) — an axis orthogonal to stages. Selecting one sets the
+    enabled set; --enable/--disable and interactive selection refine it.
+    """
+    prof = cfg.profiles.get(profile)
+    if prof is None:
+        avail = ", ".join(cfg.profiles) or "(none defined)"
+        raise SystemExit(f"Unknown profile '{profile}'. Available: {avail}")
+    wanted = set(prof.get("tools", []))
+    names = {t.name for t in cfg.tools}
+    unknown = wanted - names
+    if unknown:
+        raise SystemExit(
+            f"Profile '{profile}' references unknown tool(s): "
+            f"{', '.join(sorted(unknown))}")
+    for t in cfg.tools:
+        t.enabled = t.name in wanted
 
 
 def apply_cli_filters(cfg: Config,

@@ -99,6 +99,30 @@ tools:
     enabled: false
     tags: [passive, needs-key]
 
+  assetfinder:
+    stage: subdomains
+    desc: "Fast passive subdomain discovery (assetfinder)"
+    bin: assetfinder
+    mode: each
+    input: seeds
+    cmd: "assetfinder --subs-only {item}"
+    output: "subs/assetfinder_{item}.txt"
+    produces: subs_all
+    enabled: true
+    tags: [passive]
+
+  findomain:
+    stage: subdomains
+    desc: "Cross-source subdomain enumeration (findomain)"
+    bin: findomain
+    mode: each
+    input: seeds
+    cmd: "findomain -t {item} -q"
+    output: "subs/findomain_{item}.txt"
+    produces: subs_all
+    enabled: false
+    tags: [passive]
+
   puredns_brute:
     stage: subdomains
     desc: "Active DNS brute-force with a wordlist"
@@ -202,6 +226,31 @@ tools:
     enabled: false
     tags: [active, noisy, slow]
 
+  # ===================== SCREENSHOTS (visual recon) ===============
+  # Capture screenshots of every live host/port — the fastest way to
+  # spot login panels, dashboards, default pages and dev/staging apps.
+  gowitness:
+    stage: screenshots
+    desc: "Screenshot every live host/port (gowitness)"
+    bin: gowitness
+    input: live
+    cmd: >-
+      gowitness scan file -f {input}
+      --screenshot-path {workspace}/screenshots --write-db=false
+    output: "screenshots/.gowitness.log"
+    enabled: true
+    tags: [visual]
+
+  aquatone:
+    stage: screenshots
+    desc: "Alternative screenshot + report (aquatone)"
+    bins: [aquatone]
+    input: live
+    cmd: "cat {input} | aquatone -out {workspace}/screenshots/aquatone"
+    output: "screenshots/.aquatone.log"
+    enabled: false
+    tags: [visual]
+
   # ============================ PHASE 5 ============================
   katana:
     stage: crawl
@@ -237,6 +286,18 @@ tools:
     produces: urls_all
     enabled: true
     tags: [passive]
+
+  hakrawler:
+    stage: crawl
+    desc: "Fast endpoint crawler (hakrawler)"
+    bin: hakrawler
+    mode: each
+    input: live
+    cmd: "echo {item} | hakrawler -d 2 -u"
+    output: "urls/hakrawler_{item}.txt"
+    produces: urls_all
+    enabled: false
+    tags: [crawl]
 
   gospider:
     stage: crawl
@@ -280,6 +341,27 @@ tools:
     output: "js/jsluice_{item}.txt"
     produces: urls_all
     enabled: true
+    tags: [js]
+
+  getjs:
+    stage: js
+    desc: "Collect all JS files referenced by live hosts (getJS)"
+    bin: getJS
+    input: live
+    cmd: "getJS --input {input} --complete"
+    output: "js/getjs.txt"
+    produces: js_urls
+    enabled: false
+    tags: [js]
+
+  mantra:
+    stage: js
+    desc: "Hunt API keys/secrets in JS (mantra)"
+    bins: [mantra]
+    input: js_urls
+    cmd: "cat {input} | mantra"
+    output: "findings/mantra_secrets.txt"
+    enabled: false
     tags: [js]
 
   linkfinder:
@@ -332,6 +414,30 @@ tools:
     enabled: true
     tags: [params]
 
+  paramspider:
+    stage: params
+    desc: "Mine parameters from web archives (ParamSpider)"
+    bin: paramspider
+    mode: each
+    input: seeds
+    cmd: "paramspider -d {item} --subs -o {output}"
+    output: "params/paramspider_{item}.txt"
+    produces: params_all
+    stdout: false
+    enabled: false
+    tags: [params]
+
+  x8:
+    stage: params
+    desc: "Reflection-based hidden parameter brute (x8)"
+    bins: [x8]
+    mode: none
+    cmd: "x8 -u https://{domain}/ -w {wordlist_params} -O json -o {output}"
+    output: "params/x8.json"
+    stdout: false
+    enabled: false
+    tags: [params, needs-wordlist]
+
   # ============================ PHASE 8 ============================
   api_surface:
     stage: apis
@@ -365,6 +471,16 @@ tools:
     enabled: false
     tags: [cloud, slow]
 
+  s3scanner:
+    stage: cloud
+    desc: "Enumerate + check open S3 buckets (s3scanner)"
+    bin: s3scanner
+    input: seeds
+    cmd: "s3scanner -bucket-file {input} -enumerate"
+    output: "findings/s3scanner.txt"
+    enabled: false
+    tags: [cloud, slow]
+
   # ============================ PHASE 10 ===========================
   github_dorks:
     stage: osint
@@ -378,6 +494,13 @@ tools:
     tags: [osint, needs-key, slow]
 
   # ============================ PHASE 11 ===========================
+  injection_classify:
+    stage: triage
+    desc: "Classify URLs likely vulnerable to injection (built-in, no deps)"
+    builtin: injection_classify
+    enabled: true
+    tags: [triage, builtin]
+
   gf_triage:
     stage: triage
     desc: "Pattern-based URL triage with gf (built-in)"
@@ -385,6 +508,27 @@ tools:
     bin: gf
     enabled: true
     tags: [triage, builtin]
+
+  kxss:
+    stage: triage
+    desc: "Find reflected/unfiltered params (kxss)"
+    bins: [kxss, qsreplace]
+    input: with_params
+    cmd: "cat {input} | kxss"
+    output: "findings/kxss.txt"
+    enabled: false
+    tags: [triage]
+
+  dalfox:
+    stage: triage
+    desc: "Automated XSS scanning (dalfox)"
+    bin: dalfox
+    input: with_params
+    cmd: "dalfox file {input} --silence --skip-bav -o {output}"
+    output: "findings/dalfox.txt"
+    stdout: false
+    enabled: false
+    tags: [triage, active]
 
   nuclei:
     stage: triage
@@ -405,3 +549,93 @@ tools:
     builtin: monitor_diff
     enabled: false
     tags: [monitoring, builtin]
+
+
+# =====================================================================
+# Depth profiles — a second way to slice the pipeline, by how deep you
+# want to go. Pick one with `--profile fast|medium|deep`. This enables
+# exactly the listed tools; --enable/--disable and -i refine it further.
+# =====================================================================
+profiles:
+
+  fast:
+    desc: "Quick footprint: passive subs, resolve, probe, historical URLs, triage"
+    tools:
+      - subfinder
+      - crtsh
+      - assetfinder
+      - dnsx_resolve
+      - httpx
+      - gau
+      - waybackurls
+      - url_classify
+      - injection_classify
+      - gf_triage
+
+  medium:
+    desc: "Balanced: + takeovers, crawling, JS analysis, params, APIs, screenshots, nuclei"
+    tools:
+      - subfinder
+      - crtsh
+      - assetfinder
+      - dnsx_resolve
+      - dnsx_records
+      - subzy
+      - httpx
+      - gowitness
+      - katana
+      - gau
+      - waybackurls
+      - url_classify
+      - jsluice
+      - js_secrets
+      - source_maps
+      - arjun
+      - api_surface
+      - injection_classify
+      - gf_triage
+      - nuclei
+
+  deep:
+    desc: "Maximum surface: everything incl. brute, permutations, ports, cloud, OSINT (slow)"
+    tools:
+      - asnmap
+      - subfinder
+      - crtsh
+      - assetfinder
+      - findomain
+      - amass_passive
+      - github_subdomains
+      - puredns_brute
+      - permutations
+      - dnsx_resolve
+      - dnsx_records
+      - puredns_resolve
+      - subzy
+      - nuclei_takeover
+      - httpx
+      - naabu
+      - gowitness
+      - katana
+      - gau
+      - waybackurls
+      - hakrawler
+      - gospider
+      - url_classify
+      - jsluice
+      - getjs
+      - linkfinder
+      - js_secrets
+      - source_maps
+      - trufflehog_js
+      - arjun
+      - paramspider
+      - api_surface
+      - graphw00f
+      - cloud_enum
+      - s3scanner
+      - injection_classify
+      - gf_triage
+      - kxss
+      - nuclei
+      - monitor

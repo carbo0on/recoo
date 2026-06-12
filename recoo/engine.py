@@ -225,6 +225,7 @@ STAGE_DESC = {
     "resolve":      "DNS resolution + takeover candidates",
     "probe":        "HTTP probing + tech fingerprint",
     "ports":        "Port scanning on direct assets",
+    "screenshots":  "Visual recon: screenshot every live host/port",
     "crawl":        "Live crawling + historical URL mining",
     "urls":         "URL classification + filtering",
     "js":           "Deep JavaScript analysis (endpoints + secrets)",

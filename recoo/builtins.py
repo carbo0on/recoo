@@ -92,6 +92,101 @@ def process_urls(engine: "Engine", tool: "Tool" = None) -> None:
 
 # --- toggleable builtin tools --------------------------------------------
 
+# Parameter-name heuristics: which query params commonly expose which bug
+# class. Used to triage URLs into injection candidates with no external deps.
+INJECTION_KEYWORDS = {
+    "sqli":     ["id", "uid", "pid", "user", "userid", "item", "itemid", "cat",
+                 "category", "product", "order", "sort", "select", "where",
+                 "query", "search", "num", "no", "key", "name", "page", "col"],
+    "xss":      ["q", "s", "search", "query", "keyword", "kw", "term", "name",
+                 "message", "msg", "comment", "content", "title", "redirect",
+                 "return", "url", "callback", "jsonp", "lang", "ref"],
+    "ssrf":     ["url", "uri", "link", "src", "source", "dest", "destination",
+                 "redirect", "return", "next", "target", "host", "domain",
+                 "callback", "fetch", "file", "path", "proxy", "site", "html",
+                 "page", "feed", "to", "out", "image", "img", "load", "open"],
+    "lfi":      ["file", "path", "page", "doc", "document", "folder", "dir",
+                 "download", "read", "include", "inc", "template", "tpl",
+                 "view", "content", "name", "lang", "locale", "pg", "style"],
+    "rce":      ["cmd", "exec", "command", "run", "ping", "code", "do", "func",
+                 "function", "system", "eval", "query", "jump", "process"],
+    "ssti":     ["name", "template", "tpl", "view", "lang", "locale", "preview",
+                 "id", "page", "content", "message", "title"],
+    "redirect": ["redirect", "redir", "url", "return", "returnurl", "return_url",
+                 "next", "goto", "dest", "destination", "continue", "r", "u",
+                 "to", "out", "target", "rurl", "link", "checkout_url",
+                 "redirect_uri", "redirect_url", "callback", "forward"],
+    "idor":     ["id", "uid", "user", "userid", "account", "acct", "number",
+                 "no", "order", "orderid", "doc", "file", "fileid", "key",
+                 "profile", "group", "invoice", "ticket", "record", "ref"],
+}
+
+
+def injection_classify(engine: "Engine", tool: "Tool" = None) -> None:
+    """Extract URLs likely vulnerable to injection and classify by bug class.
+
+    Reads urls/with_params.txt (falling back to urls/clean.txt), inspects
+    each query parameter name, and writes:
+        findings/injection/<class>.txt          one file per bug class
+        findings/injection_candidates.txt        combined, tagged report
+    Pure-python — no external tool required, so it always runs.
+    """
+    from urllib.parse import urlparse, parse_qs
+
+    src = engine.ws.artifact("with_params")
+    if count_lines(src) == 0:
+        src = engine.ws.artifact("urls_clean")
+    if count_lines(src) == 0:
+        engine.log.warn("injection_classify: no URLs with parameters yet")
+        return
+
+    buckets = {cls: [] for cls in INJECTION_KEYWORDS}
+    combined = []
+    seen_combined = set()
+
+    for url in read_lines(src):
+        try:
+            q = urlparse(url).query
+        except ValueError:
+            continue
+        if not q:
+            continue
+        params = list(parse_qs(q).keys())
+        if not params:
+            continue
+        matched = set()
+        for pname in params:
+            low = pname.lower()
+            for cls, keys in INJECTION_KEYWORDS.items():
+                if low in keys:
+                    matched.add(cls)
+        if not matched:
+            continue
+        for cls in matched:
+            buckets[cls].append(url)
+        tag = ",".join(sorted(matched))
+        line = f"[{tag}] {url}"
+        if line not in seen_combined:
+            seen_combined.add(line)
+            combined.append(line)
+
+    inj_dir = engine.ws.root / "findings" / "injection"
+    inj_dir.mkdir(parents=True, exist_ok=True)
+    total_by_class = {}
+    for cls, urls in buckets.items():
+        urls = dedup(urls)
+        total_by_class[cls] = len(urls)
+        if urls:
+            (inj_dir / f"{cls}.txt").write_text("\n".join(urls) + "\n")
+
+    out = engine.ws.path("findings/injection_candidates.txt")
+    out.write_text("\n".join(combined) + ("\n" if combined else ""))
+
+    summary = " · ".join(f"{c}:{n}" for c, n in total_by_class.items() if n)
+    engine.log.ok(f"injection candidates: {len(combined)} URLs "
+                  f"[{summary or 'none'}] -> findings/injection_candidates.txt")
+
+
 def gf_patterns(engine: "Engine", tool: "Tool") -> None:
     """Run gf patterns over urls/clean.txt into findings/gf_<pattern>.txt."""
     if not engine._have("gf"):
@@ -213,6 +308,7 @@ def monitor_diff(engine: "Engine", tool: "Tool") -> None:
 
 _HANDLERS = {
     "process_urls": process_urls,
+    "injection_classify": injection_classify,
     "gf_patterns": gf_patterns,
     "api_docs": api_docs,
     "secrets_grep": secrets_grep,

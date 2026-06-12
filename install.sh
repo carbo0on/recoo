@@ -49,6 +49,12 @@ GO_TOOLS=(
   "github.com/BishopFox/jsluice/cmd/jsluice@latest"
   "github.com/d3mondev/puredns/v2@latest"
   "github.com/Josue87/gotator@latest"
+  "github.com/tomnomnom/assetfinder@latest"
+  "github.com/sensepost/gowitness@latest"
+  "github.com/hakluke/hakrawler@latest"
+  "github.com/hahwul/dalfox/v2@latest"
+  "github.com/tomnomnom/qsreplace@latest"
+  "github.com/003random/getJS/v2@latest"
 )
 
 install_go_tools() {
@@ -75,7 +81,8 @@ install_pip_tools() {
     info "pip install $t"
     pip3 install --quiet --user "$t" || warn "  failed $t"
   done
-  warn "LinkFinder, cloud_enum, graphw00f, trufflehog: install from their repos"
+  warn "LinkFinder, cloud_enum, graphw00f, trufflehog, paramspider, findomain,"
+  warn "s3scanner, aquatone, x8, mantra: install from their own repos"
 }
 
 case "$WHAT" in

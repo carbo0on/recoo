@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__
-from .config import Config, apply_cli_filters, load
+from . import __version__, interactive, report
+from .config import Config, apply_cli_filters, apply_profile, load
 from .engine import STAGE_DESC, Engine
 from .ui import C, Logger
 from .workspace import Workspace, count_lines
@@ -39,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("-c", "--config", help="path to a config.yaml override")
 
     sel = p.add_argument_group("tool selection (the control layer)")
+    sel.add_argument("-p", "--profile", choices=["fast", "medium", "deep"],
+                     help="depth profile: enable a curated tool set")
+    sel.add_argument("-i", "--interactive", action="store_true",
+                     help="show a checklist to toggle tools before running")
     sel.add_argument("--only", help="run ONLY these tools (comma-separated)")
     sel.add_argument("--enable", help="force-enable these tools")
     sel.add_argument("--disable", help="force-disable these tools")
@@ -54,12 +58,18 @@ def build_parser() -> argparse.ArgumentParser:
                      help="override per-tool timeout (seconds)")
     run.add_argument("--dry-run", action="store_true",
                      help="print what would run, execute nothing")
+    run.add_argument("--no-html", action="store_true",
+                     help="do not generate the HTML report")
+    run.add_argument("--report-only", action="store_true",
+                     help="regenerate report.html from an existing workspace")
 
     info = p.add_argument_group("inspection")
     info.add_argument("--list-tools", action="store_true",
                       help="show every tool with its state and exit")
     info.add_argument("--list-stages", action="store_true",
                       help="show the pipeline stages and exit")
+    info.add_argument("--list-profiles", action="store_true",
+                      help="show the depth profiles and exit")
 
     log = p.add_argument_group("logging")
     log.add_argument("-v", "--verbose", action="store_true",
@@ -117,6 +127,22 @@ def _print_stages(cfg: Config) -> None:
     print()
 
 
+def _print_profiles(cfg: Config) -> None:
+    print(f"\n{C.BOLD}recoo depth profiles{C.RESET}\n")
+    if not cfg.profiles:
+        print("  (none defined)\n")
+        return
+    for name in ("fast", "medium", "deep"):
+        prof = cfg.profiles.get(name)
+        if not prof:
+            continue
+        tools = prof.get("tools", [])
+        print(f"  {C.CYAN}{name:<8}{C.RESET}{C.DIM}{prof.get('desc', '')}{C.RESET}")
+        print(f"           {C.GREY}{len(tools)} tools: "
+              f"{', '.join(tools)}{C.RESET}\n")
+    print(f"{C.DIM}use with:  recoo -d example.com --profile medium{C.RESET}\n")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -128,6 +154,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg.settings["threads"] = args.threads
     if args.timeout:
         cfg.settings["timeout"] = args.timeout
+
+    # Depth profile first (sets the base enabled set), then refine.
+    if args.profile:
+        apply_profile(cfg, args.profile)
 
     apply_cli_filters(
         cfg,
@@ -145,12 +175,31 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.list_stages:
         _print_stages(cfg)
         return 0
+    if args.list_profiles:
+        _print_profiles(cfg)
+        return 0
 
     domains = _resolve_domains(args, log)
     if not domains:
         log.error("no target. Pass a domains file or use -d example.com "
                   "(or --list-tools to inspect).")
         return 2
+
+    # Regenerate the report from an existing workspace and exit.
+    if args.report_only:
+        ws = Workspace(args.output)
+        import json
+        meta_path = ws.root / ".recoo" / "run.json"
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        out = report.generate(ws, domains, meta)
+        log.ok(f"report regenerated: {out}")
+        return 0
+
+    # Interactive checklist: let the user fine-tune the selection.
+    if args.interactive:
+        if not interactive.select(cfg):
+            log.warn("aborted by user")
+            return 1
 
     log.banner(__version__)
     ws = Workspace(args.output)
@@ -161,6 +210,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     log.info(f"targets   : {len(domains)} "
              f"({', '.join(domains[:3])}{'…' if len(domains) > 3 else ''})")
     log.info(f"workspace : {ws.root}")
+    if args.profile:
+        log.info(f"profile   : {args.profile}")
     log.info(f"tools on  : {len(enabled)}/{len(cfg.tools)}  "
              f"[{', '.join(enabled)}]")
     if args.dry_run:
@@ -170,16 +221,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     engine = Engine(cfg, ws, log, single_domain=single, dry_run=args.dry_run)
     result = engine.run()
 
-    _summary(log, ws, result)
-    ws.save_meta({
+    meta = {
         "version": __version__,
         "targets": domains,
+        "profile": args.profile,
         "ran": result.ran,
         "skipped": result.skipped,
         "failed": result.failed,
         "new_lines": result.new_lines,
         "elapsed": log.elapsed(),
-    })
+    }
+    ws.save_meta(meta)
+
+    if not args.no_html and not args.dry_run:
+        out = report.generate(ws, domains, meta)
+        log.ok(f"HTML report: {out}")
+
+    _summary(log, ws, result)
     return 0
 
 
@@ -191,6 +249,7 @@ def _summary(log: Logger, ws: Workspace, result) -> None:
         ("urls (clean)", "urls/clean.txt"),
         ("js files", "js/js_urls.txt"),
         ("params", "params/all.txt"),
+        ("inj. candidates", "findings/injection_candidates.txt"),
     ]
     print(f"\n{C.BLUE}{'─' * 58}{C.RESET}")
     print(f"{C.BOLD}{C.GREEN}▌ recon complete{C.RESET}  "
@@ -206,9 +265,13 @@ def _summary(log: Logger, ws: Workspace, result) -> None:
     if result.failed:
         print(f"  {C.RED}failed:{C.RESET} {', '.join(result.failed)}")
     findings = ws.root / "findings"
-    hits = [f.name for f in sorted(findings.glob('*')) if count_lines(f) > 0]
+    hits = [f.name for f in sorted(findings.glob('*')) if f.is_file()
+            and count_lines(f) > 0]
     if hits:
         print(f"  {C.MAGENTA}findings/:{C.RESET} {', '.join(hits)}")
+    rep = ws.root / "report.html"
+    if rep.exists():
+        print(f"  {C.GREEN}report:{C.RESET} {rep}")
     print(f"\n  results in {C.BOLD}{ws.root}{C.RESET}\n")
 
 
@@ -216,10 +279,13 @@ _EPILOG = """
 examples:
   recoo example.com                       run defaults on one domain
   recoo domains.txt -o acme               run on a list, custom output dir
+  recoo -d example.com --profile fast     quick depth profile
+  recoo -d example.com --profile medium -i   pick profile, then a checklist
+  recoo -d example.com --profile deep --exclude-tags needs-key
   recoo -d example.com --only subfinder,httpx,katana
   recoo -d example.com --disable nuclei,amass_passive
-  recoo -d example.com --stages subdomains,resolve,probe
-  recoo -d example.com --exclude-tags slow,noisy,needs-key
+  recoo -d example.com --report-only      rebuild report.html only
+  recoo --list-profiles                   show fast/medium/deep
   recoo --list-tools                      inspect/verify your selection
   recoo -d example.com --dry-run -v       preview the exact commands
 """

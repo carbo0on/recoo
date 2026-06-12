@@ -89,11 +89,56 @@ python3 recoo.py -d example.com --exclude-tags slow,noisy,needs-key
 python3 recoo.py -d example.com --dry-run -v
 ```
 
+### أنماط العمق / Depth profiles
+
+تقسيمة إضافية حسب العمق (محور مختلف عن المراحل والأدوات): اختر نمطًا واحدًا فيشغّل
+مجموعة أدوات منتقاة، ثم نقّحه بـ `--enable/--disable` أو الواجهة التفاعلية.
+
+```bash
+python3 recoo.py -d example.com --profile fast     # سريع: passive + resolve + probe + triage
+python3 recoo.py -d example.com --profile medium   # متوسط: + crawl + JS + params + screenshots + nuclei
+python3 recoo.py -d example.com --profile deep      # عميق جدًا: كل شيء (brute, ports, cloud, OSINT)
+python3 recoo.py --list-profiles                    # اعرض الأنماط الثلاثة وأدواتها
+```
+
+### الواجهة التفاعلية / Interactive checklist
+
+أضف `-i` لتظهر أمامك **تشيك ليست** بالأدوات المختارة، فتزيل أو تضيف أيًّا منها قبل
+التشغيل (أسهم ↑/↓، مسافة للتبديل، Enter للتشغيل — أو أرقام في الوضع البديل):
+
+```bash
+python3 recoo.py -d example.com --profile medium -i
+```
+
+### تصنيف روابط الحقن / Injection candidate classification
+
+أداة `injection_classify` (مدمجة، بلا اعتماديات) تستخرج الروابط المرشّحة للإصابة
+بثغرات الحقن وتصنّفها حسب نوع الثغرة:
+
+```
+findings/injection_candidates.txt        # تقرير موحّد موسوم
+findings/injection/sqli.txt              # ملف لكل صنف:
+findings/injection/{xss,ssrf,lfi,rce,ssti,redirect,idor}.txt
+```
+
+### السكرين شوت / Screenshots
+
+مرحلة `screenshots` تلتقط صورة لكل live host/port عبر `gowitness` (أو `aquatone`)
+إلى مجلد `screenshots/`، وتظهر في تقرير الـ HTML كمعرض صور.
+
+### تقرير HTML / HTML report
+
+يُنشأ تلقائيًا في نهاية كل تشغيل: `report.html` — صفحة واحدة منظّمة (dark theme)
+فيها البطاقات الإحصائية، جدول الـ live hosts، مرشّحات الحقن مصنّفة، معرض السكرين
+شوت، وملخّص الأدوات. لإعادة توليده من نتائج موجودة: `--report-only`. لتعطيله:
+`--no-html`.
+
 ### الفحص / Inspect
 
 ```bash
 python3 recoo.py --list-tools     # كل أداة وحالتها (مفعّلة/متوقفة) + الوسوم
 python3 recoo.py --list-stages    # مراحل الـ pipeline وعدد الأدوات المفعّلة بكلٍّ
+python3 recoo.py --list-profiles  # أنماط العمق (fast / medium / deep)
 ```
 
 ---
@@ -108,15 +153,16 @@ python3 recoo.py --list-stages    # مراحل الـ pipeline وعدد الأد
 | 4 | `resolve` | حلّ DNS + مرشّحات الـ takeover |
 | 5 | `probe` | HTTP probing + بصمة التقنيات (httpx) |
 | 6 | `ports` | فحص المنافذ على الأصول المباشرة |
-| 7 | `crawl` | زحف حيّ (JS-aware) + URLs تاريخية |
-| 8 | `urls` | تصنيف الـ URLs (clean / params / js) |
-| 9 | `js` | تحليل JS عميق: endpoints + secrets + source maps |
-| 10 | `params` | اكتشاف parameters مخفيّة |
-| 11 | `apis` | أسطح API حديثة (REST/GraphQL/docs) |
-| 12 | `cloud` | تخزين سحابي / edge / buckets |
-| 13 | `osint` | OSINT و secrets و code leaks |
-| 14 | `triage` | تحويل النتائج لـ attack vectors (gf + nuclei) |
-| 15 | `monitoring` | استطلاع مستمر: diff + notify |
+| 7 | `screenshots` | التقاط صورة لكل live host/port (gowitness/aquatone) |
+| 8 | `crawl` | زحف حيّ (JS-aware) + URLs تاريخية |
+| 9 | `urls` | تصنيف الـ URLs (clean / params / js) |
+| 10 | `js` | تحليل JS عميق: endpoints + secrets + source maps |
+| 11 | `params` | اكتشاف parameters مخفيّة |
+| 12 | `apis` | أسطح API حديثة (REST/GraphQL/docs) |
+| 13 | `cloud` | تخزين سحابي / edge / buckets |
+| 14 | `osint` | OSINT و secrets و code leaks |
+| 15 | `triage` | تصنيف روابط الحقن + gf + nuclei |
+| 16 | `monitoring` | استطلاع مستمر: diff + notify |
 
 ---
 
@@ -130,8 +176,12 @@ python3 recoo.py --list-stages    # مراحل الـ pipeline وعدد الأد
 ├── urls/         all.txt, clean.txt, with_params.txt
 ├── js/           js_urls.txt + extracted endpoints
 ├── params/       discovered parameters
+├── screenshots/  gowitness/aquatone captures
 ├── findings/     takeovers, gf_*, nuclei, secrets, api_surface, source_maps
+│   ├── injection_candidates.txt        # روابط الحقن مصنّفة (موحّد)
+│   └── injection/{sqli,xss,ssrf,...}.txt
 ├── monitoring/   snapshots + diffs over time
+├── report.html   تقرير HTML منظّم (يُنشأ تلقائيًا)
 └── .recoo/       run.json metadata
 ```
 
