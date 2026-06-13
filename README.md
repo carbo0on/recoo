@@ -58,6 +58,22 @@ recoo يعمل بـ Python 3.8+ و PyYAML فقط. باقي العمل تقوم �
 (subfinder, httpx, dnsx, katana, nuclei, gau, jsluice, arjun, gf …) ويتم
 تخطّي أي أداة غير موجودة.
 
+### الإعداد التلقائي / Auto-bootstrap (zero manual setup)
+
+الخطوات 2 و3 أعلاه **اختيارية**. عند كل تشغيل، يقوم recoo تلقائياً (best-effort)
+بتوفير ما تحتاجه الأدوات المُفعّلة وكان ناقصاً، دون أي عمل يدوي:
+
+- **تثبيت الأدوات الناقصة** عبر `go install` / `pip` / `apt` (subfinder, httpx,
+  nuclei, amass, trufflehog … + `massdns` اللازم لـ puredns).
+- **تحميل الورد ليست** للمستوى الفعّال + ملف الـ resolvers.
+- **تحديث قوالب nuclei** (`-update-templates`) و**تثبيت أنماط gf** في `~/.gf`.
+
+كل خطوة تتسامح مع غياب الشبكة/الأدوات: تُسجَّل وتُتخطّى بدل إيقاف التشغيل.
+عطّل ذلك بـ `--no-bootstrap`.
+
+> **الورد ليست الكبيرة (`full`) غير متوفرة؟** لا تُتخطّى الخطوة — يُنزّل recoo
+> تلقائياً إلى أصغر مستوى موجود (`short` ثم `micro`) ويُكمل العمل.
+
 ---
 
 ## الاستخدام السريع / Quick start

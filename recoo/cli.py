@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, interactive, report
+from . import __version__, bootstrap, interactive, report
 from .config import (Config, apply_cli_filters, apply_profile, load,
                      wordlist_path)
 from .engine import STAGE_DESC, Engine
@@ -62,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
                           "(micro=fast, full=max). Overrides the profile.")
     run.add_argument("--dry-run", action="store_true",
                      help="print what would run, execute nothing")
+    run.add_argument("--no-bootstrap", action="store_true",
+                     help="skip auto-install of missing tools/wordlists/"
+                          "templates (provisioning is on by default)")
     run.add_argument("--no-html", action="store_true",
                      help="do not generate the HTML report")
     run.add_argument("--report-only", action="store_true",
@@ -253,6 +256,12 @@ def main(argv: Optional[List[str]] = None) -> int:
              f"[{', '.join(enabled)}]")
     if args.dry_run:
         log.warn("dry-run: no commands will be executed")
+
+    # Auto-provision missing tools/wordlists/templates so a run is
+    # self-sufficient (skip with --no-bootstrap, or for a dry-run).
+    if not args.no_bootstrap and not args.dry_run:
+        repo_root = Path(__file__).resolve().parent.parent
+        bootstrap.run(cfg, log, repo_root)
 
     single = domains[0] if len(domains) == 1 else None
     engine = Engine(cfg, ws, log, single_domain=single, dry_run=args.dry_run)

@@ -407,10 +407,13 @@ tools:
     desc: "Hidden HTTP parameter discovery"
     bin: arjun
     input: live
-    cmd: "arjun -i {input} -oT {output} -t {threads}"
+    # --stable survives rate-limited/WAF'd targets (avoids the upstream
+    # crash on throttled responses); -T adds a small delay between requests.
+    cmd: "arjun -i {input} -oT {output} -t {threads} --stable -T 0.2"
     output: "params/arjun.txt"
     produces: params_all
     stdout: false
+    timeout: 600
     enabled: true
     tags: [params]
 
