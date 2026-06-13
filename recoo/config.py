@@ -31,10 +31,35 @@ DEFAULT_SETTINGS: Dict[str, object] = {
     "threads": 40,
     "timeout": 1800,            # global per-tool timeout (seconds)
     "resolvers": "wordlists/resolvers.txt",
-    "wordlist_dns": "wordlists/dns.txt",
-    "wordlist_content": "wordlists/content.txt",
-    "wordlist_params": "wordlists/params.txt",
-    "wordlist_perms": "wordlists/permutations.txt",
+
+    # --- Wordlists: OneListForAll (six2dez) integration -----------------
+    # The {wordlist_*} placeholders resolve from `wordlists_dir` +
+    # `wordlist_sizes[role][wordlist_size]`. Pick the tier with
+    # `wordlist_size` (or --wordlist-size); depth profiles set it too
+    # (fast->micro, medium->short, deep->full). A non-empty per-role
+    # override below always wins.
+    "wordlists_dir": "wordlists/OneListForAll",
+    "wordlist_size": "short",          # micro | short | full
+    "wordlist_sizes": {
+        "content": {"micro": "onelistforallmicro.txt",
+                    "short": "onelistforall.txt",
+                    "full":  "onelistforall_big.txt"},
+        "dns":     {"micro": "dict/dns_short.txt",
+                    "short": "dict/subdomains_short.txt",
+                    "full":  "dict/subdomains_long.txt"},
+        "params":  {"micro": "dict/parameters_short.txt",
+                    "short": "dict/parameters_short.txt",
+                    "full":  "dict/parameters_long.txt"},
+        "perms":   {"micro": "dict/permutations_short.txt",
+                    "short": "dict/permutations_short.txt",
+                    "full":  "dict/permutations_long.txt"},
+    },
+    # Explicit per-role overrides (leave empty to use the size tiers).
+    "wordlist_dns": "",
+    "wordlist_content": "",
+    "wordlist_params": "",
+    "wordlist_perms": "",
+
     "github_token": "",
     "gf_patterns": ["ssrf", "redirect", "idor", "xss", "lfi", "sqli",
                     "rce", "ssti", "debug_logic"],
@@ -45,6 +70,9 @@ DEFAULT_SETTINGS: Dict[str, object] = {
     "notify": False,
     "vars": {},
 }
+
+# Roles whose {wordlist_<role>} placeholder is size-resolved.
+WORDLIST_ROLES = ("content", "dns", "params", "perms")
 
 
 @dataclass
@@ -109,6 +137,25 @@ def load(user_config: Optional[str] = None,
     return Config(settings=settings, tools=tools, profiles=profiles)
 
 
+def wordlist_path(settings: Dict[str, object], role: str,
+                  size: Optional[str] = None) -> str:
+    """Resolve a {wordlist_<role>} path.
+
+    An explicit per-role override (settings['wordlist_<role>']) wins;
+    otherwise build it from wordlists_dir + the size tier (defaulting to
+    the active settings['wordlist_size']).
+    """
+    explicit = settings.get(f"wordlist_{role}")
+    if explicit:
+        return str(explicit)
+    sizes = (settings.get("wordlist_sizes") or {}).get(role, {})
+    size = size or settings.get("wordlist_size", "short")
+    rel = sizes.get(size) or sizes.get("short") or ""
+    if not rel:
+        return ""
+    return str(Path(settings.get("wordlists_dir", "wordlists")) / rel)
+
+
 def apply_profile(cfg: Config, profile: str) -> None:
     """Enable exactly the tools listed in the named depth profile.
 
@@ -129,6 +176,9 @@ def apply_profile(cfg: Config, profile: str) -> None:
             f"{', '.join(sorted(unknown))}")
     for t in cfg.tools:
         t.enabled = t.name in wanted
+    # A profile may also pick a wordlist size tier (CLI flag still wins).
+    if prof.get("wordlist_size"):
+        cfg.settings["wordlist_size"] = prof["wordlist_size"]
 
 
 def apply_cli_filters(cfg: Config,

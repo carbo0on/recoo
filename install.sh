@@ -85,11 +85,23 @@ install_pip_tools() {
   warn "s3scanner, aquatone, x8, mantra: install from their own repos"
 }
 
+install_wordlists() {
+  if [ -x ./download-wordlists.sh ]; then
+    info "fetching wordlists (OneListForAll, short tier)"
+    ./download-wordlists.sh short
+  else
+    warn "download-wordlists.sh not found/executable; skipping wordlists"
+  fi
+}
+
 case "$WHAT" in
-  --go)     install_go_tools ;;
-  --python) install_python_deps; install_pip_tools ;;
-  all)      install_python_deps; install_go_tools; install_pip_tools ;;
-  *)        err "unknown option: $WHAT (use: all | --go | --python)"; exit 1 ;;
+  --go)        install_go_tools ;;
+  --python)    install_python_deps; install_pip_tools ;;
+  --wordlists) install_wordlists ;;
+  all)         install_python_deps; install_go_tools; install_pip_tools
+               install_wordlists ;;
+  *) err "unknown option: $WHAT (use: all | --go | --python | --wordlists)"
+     exit 1 ;;
 esac
 
-info "done. Verify what recoo can see:  ./recoo.py --list-tools"
+info "done. Verify:  ./recoo.py --list-tools   ·   ./recoo.py --list-wordlists"

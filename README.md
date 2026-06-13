@@ -43,11 +43,15 @@ cd recoo
 pip3 install -r requirements.txt
 
 # 2) أدوات الـ recon الخارجية (اختياري — ثبّت ما تحتاجه فقط)
-chmod +x install.sh
-./install.sh            # كل الأدوات | --go للأدوات الـ Go فقط | --python لأدوات pip
+chmod +x install.sh download-wordlists.sh
+./install.sh            # كل الأدوات + الورد ليست | --go | --python | --wordlists
 
-# 3) تأكّد ماذا يرى recoo
+# 3) الورد ليست (OneListForAll) — أو شغّلها مباشرةً بمستوى محدّد
+./download-wordlists.sh short      # micro | short | full
+
+# 4) تأكّد ماذا يرى recoo
 python3 recoo.py --list-tools
+python3 recoo.py --list-wordlists
 ```
 
 recoo يعمل بـ Python 3.8+ و PyYAML فقط. باقي العمل تقوم به أدوات معروفة
@@ -137,12 +141,45 @@ findings/injection/{xss,ssrf,lfi,rce,ssti,redirect,idor}.txt
 شوت، وملخّص الأدوات. لإعادة توليده من نتائج موجودة: `--report-only`. لتعطيله:
 `--no-html`.
 
+### الورد ليست / Wordlists (OneListForAll)
+
+تكامل مرن مع [OneListForAll](https://github.com/six2dez/OneListForAll) بأنواعها
+عبر **ثلاثة مستويات حجم** تُربط تلقائيًا بأنماط العمق:
+
+| المستوى | المصدر في OneListForAll | يُربط بنمط |
+|---|---|---|
+| `micro` | `onelistforallmicro.txt` + قوائم `*_short` صغيرة | `fast` |
+| `short` | `onelistforall.txt` + `dict/*_short.txt` | `medium` |
+| `full` | `onelistforall_big.txt` + `dict/*_long.txt` | `deep` |
+
+التحميل (يضع الملفات في `wordlists/OneListForAll/` + resolvers من trickest):
+
+```bash
+./download-wordlists.sh short      # أو micro | full
+```
+
+التحكّم في المستوى وقت التشغيل (يتجاوز اختيار النمط):
+
+```bash
+python3 recoo.py -d example.com --profile medium --wordlist-size full
+python3 recoo.py --list-wordlists   # يعرض المسارات المُحلّلة لكل مستوى + موجود/مفقود
+```
+
+الـ placeholders `{wordlist_dns}` `{wordlist_content}` `{wordlist_params}`
+`{wordlist_perms}` تُحلّ تلقائيًا حسب المستوى النشط. لتثبيت ملف مختلف لأي دور
+استخدم `wordlist_sizes` أو override صريح في `config.yaml`. أي أداة تحتاج ورد ليست
+مفقودة يتم تخطّيها مع رسالة توضّح أمر التحميل.
+
+> ملاحظة: ملفات `*_long` الضخمة (>100MB) غير مخزّنة في مستودع OneListForAll
+> وتُولّد محليًا — السكربت ينبّهك ويعطيك أمر التوليد الرسمي عند الحاجة.
+
 ### الفحص / Inspect
 
 ```bash
-python3 recoo.py --list-tools     # كل أداة وحالتها (مفعّلة/متوقفة) + الوسوم
-python3 recoo.py --list-stages    # مراحل الـ pipeline وعدد الأدوات المفعّلة بكلٍّ
-python3 recoo.py --list-profiles  # أنماط العمق (fast / medium / deep)
+python3 recoo.py --list-tools      # كل أداة وحالتها (مفعّلة/متوقفة) + الوسوم
+python3 recoo.py --list-stages     # مراحل الـ pipeline وعدد الأدوات المفعّلة بكلٍّ
+python3 recoo.py --list-profiles   # أنماط العمق (fast / medium / deep)
+python3 recoo.py --list-wordlists  # مسارات الورد ليست لكل مستوى + الموجود منها
 ```
 
 ---

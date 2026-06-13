@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__, interactive, report
-from .config import Config, apply_cli_filters, apply_profile, load
+from .config import (Config, apply_cli_filters, apply_profile, load,
+                     wordlist_path)
 from .engine import STAGE_DESC, Engine
 from .ui import C, Logger
 from .workspace import Workspace, count_lines
@@ -56,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--threads", type=int, help="override global concurrency")
     run.add_argument("--timeout", type=int,
                      help="override per-tool timeout (seconds)")
+    run.add_argument("--wordlist-size", choices=["micro", "short", "full"],
+                     help="OneListForAll tier for {wordlist_*} "
+                          "(micro=fast, full=max). Overrides the profile.")
     run.add_argument("--dry-run", action="store_true",
                      help="print what would run, execute nothing")
     run.add_argument("--no-html", action="store_true",
@@ -70,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="show the pipeline stages and exit")
     info.add_argument("--list-profiles", action="store_true",
                       help="show the depth profiles and exit")
+    info.add_argument("--list-wordlists", action="store_true",
+                      help="show resolved wordlist paths per tier and exit")
 
     log = p.add_argument_group("logging")
     log.add_argument("-v", "--verbose", action="store_true",
@@ -143,6 +149,31 @@ def _print_profiles(cfg: Config) -> None:
     print(f"{C.DIM}use with:  recoo -d example.com --profile medium{C.RESET}\n")
 
 
+def _print_wordlists(cfg: Config) -> None:
+    from pathlib import Path
+    s = cfg.settings
+    active = s.get("wordlist_size", "short")
+    print(f"\n{C.BOLD}recoo wordlists{C.RESET}  "
+          f"{C.DIM}OneListForAll · dir: {s.get('wordlists_dir')} · "
+          f"active tier: {C.RESET}{C.CYAN}{active}{C.RESET}\n")
+    for role in ("content", "dns", "params", "perms"):
+        print(f"  {C.BOLD}{role}{C.RESET}")
+        for size in ("micro", "short", "full"):
+            p = wordlist_path(s, role, size)
+            exists = p and Path(p).exists()
+            mark = f"{C.GREEN}✓{C.RESET}" if exists else f"{C.GREY}✗{C.RESET}"
+            arrow = f"{C.CYAN}❯{C.RESET}" if size == active else " "
+            name = (f"{C.BOLD}{size:<6}{C.RESET}" if size == active
+                    else f"{C.DIM}{size:<6}{C.RESET}")
+            print(f"    {arrow} {mark} {name} {C.DIM}{p or '-'}{C.RESET}")
+    res = s.get("resolvers", "")
+    rmark = (f"{C.GREEN}✓{C.RESET}" if res and Path(res).exists()
+             else f"{C.GREY}✗{C.RESET}")
+    print(f"\n  {C.BOLD}resolvers{C.RESET}\n      {rmark} {C.DIM}{res}{C.RESET}")
+    print(f"\n  {C.DIM}✓ present · ✗ missing · "
+          f"fetch with: ./download-wordlists.sh {active}{C.RESET}\n")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -155,9 +186,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.timeout:
         cfg.settings["timeout"] = args.timeout
 
-    # Depth profile first (sets the base enabled set), then refine.
+    # Depth profile first (sets the base enabled set + wordlist tier).
     if args.profile:
         apply_profile(cfg, args.profile)
+    # Explicit wordlist tier wins over the profile's choice.
+    if args.wordlist_size:
+        cfg.settings["wordlist_size"] = args.wordlist_size
 
     apply_cli_filters(
         cfg,
@@ -177,6 +211,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.list_profiles:
         _print_profiles(cfg)
+        return 0
+    if args.list_wordlists:
+        _print_wordlists(cfg)
         return 0
 
     domains = _resolve_domains(args, log)
