@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import builtins as bi
-from .config import Config, wordlist_path
+from .config import Config, resolve_wordlist, wordlist_path
 from .tool import ARTIFACTS, Tool
 from .ui import C, Logger
 from .workspace import Workspace, anew, count_lines, dedup, read_lines
@@ -43,6 +43,7 @@ class Engine:
         self.dry_run = dry_run
         self.result = RunResult()
         self._which_cache: Dict[str, bool] = {}
+        self._wl_notified: set = set()
 
     # ---- helpers ---------------------------------------------------------
 
@@ -52,7 +53,17 @@ class Engine:
         return self._which_cache[binary]
 
     def _wordlist(self, role: str) -> str:
-        return wordlist_path(self.cfg.settings, role)
+        """Resolve a role's wordlist, auto-downgrading to a present tier."""
+        resolved = resolve_wordlist(self.cfg.settings, role)
+        nominal = wordlist_path(self.cfg.settings, role)
+        # Tell the user once if we silently fell back to a smaller list.
+        if (resolved and resolved != nominal and role not in self._wl_notified
+                and Path(resolved).exists()):
+            self._wl_notified.add(role)
+            want = self.cfg.settings.get("wordlist_size", "short")
+            self.log.warn(f"wordlist[{role}]: '{want}' tier missing, "
+                          f"using {Path(resolved).name} instead")
+        return resolved
 
     def _vars(self) -> Dict[str, str]:
         s = self.cfg.settings
@@ -175,15 +186,20 @@ class Engine:
             if out:
                 produced.append(out)
 
-        if not rc_any_ok and not self.dry_run:
-            self.result.failed[tool.name] = "non-zero exit"
+        # A non-zero exit only counts as a failure when nothing was produced.
+        # Many tools (gowitness, puredns, ...) return non-zero yet still emit
+        # useful output; flagging those as "failed" was misleading.
+        produced_lines = sum(count_lines(p) for p in produced)
+        if not rc_any_ok and produced_lines == 0 and not self.dry_run:
+            self.result.failed[tool.name] = "non-zero exit, no output"
         self.result.ran.append(tool.name)
         self._merge(tool, produced)
 
         dur = int(time.time() - start)
         if tool.output and not self.dry_run:
             main_out = self._output_path(tool, None if tool.mode != "each" else "")
-            n = sum(count_lines(p) for p in produced) if tool.mode == "each" else count_lines(main_out) if main_out else 0
+            n = (produced_lines if tool.mode == "each"
+                 else count_lines(main_out) if main_out else 0)
             self.log.ok(f"done {tool.name} · {n} lines · {dur}s")
 
     def _collect_outputs(self, tool: Tool) -> List[Path]:

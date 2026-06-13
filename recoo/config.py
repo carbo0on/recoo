@@ -156,6 +156,42 @@ def wordlist_path(settings: Dict[str, object], role: str,
     return str(Path(settings.get("wordlists_dir", "wordlists")) / rel)
 
 
+# When the requested tier isn't on disk, fall back to a smaller one that is
+# (rather than skipping the step). Order = requested first, then degrade.
+_FALLBACK_ORDER = {
+    "full":  ["full", "short", "micro"],
+    "short": ["short", "micro", "full"],
+    "micro": ["micro", "short", "full"],
+}
+
+
+def resolve_wordlist(settings: Dict[str, object], role: str,
+                     size: Optional[str] = None) -> str:
+    """Resolve a wordlist to an existing file, auto-downgrading the tier.
+
+    If the requested size tier (or the active one) isn't present on disk,
+    transparently fall back to the next smaller tier that *does* exist —
+    so e.g. a missing ``full`` list quietly uses ``short`` or ``micro``
+    instead of skipping the tool entirely. An explicit per-role override
+    always wins. Returns the nominal requested path if nothing exists yet
+    (so the caller can decide to download or skip).
+    """
+    explicit = settings.get(f"wordlist_{role}")
+    if explicit:
+        return str(explicit)
+    size = size or settings.get("wordlist_size", "short")
+    order = _FALLBACK_ORDER.get(size, [size, "short", "micro", "full"])
+    seen: List[str] = []
+    for sz in order:
+        if sz in seen:
+            continue
+        seen.append(sz)
+        p = wordlist_path(settings, role, sz)
+        if p and Path(p).exists():
+            return p
+    return wordlist_path(settings, role, size)
+
+
 def apply_profile(cfg: Config, profile: str) -> None:
     """Enable exactly the tools listed in the named depth profile.
 
