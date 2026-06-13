@@ -107,10 +107,22 @@ def _go_bin_dir() -> Optional[str]:
     return str(Path(gopath) / "bin")
 
 
-def _ensure_path(extra: Optional[str]) -> None:
-    """Add a dir to PATH for this process so just-installed tools are found."""
-    if extra and Path(extra).is_dir() and extra not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = extra + os.pathsep + os.environ.get("PATH", "")
+def _ensure_path(extra: Optional[str], prepend: bool = True) -> None:
+    """Make ``extra`` usable on PATH for this process.
+
+    ``prepend`` puts it first (moving it ahead if already present) — used
+    for the Go bin dir so ProjectDiscovery tools win. With ``prepend=False``
+    the dir is *appended*, so e.g. a pip-installed ``httpx`` in
+    ``~/.local/bin`` can never shadow the real Go ``httpx`` on PATH.
+    """
+    if not extra or not Path(extra).is_dir():
+        return
+    parts = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    if prepend:
+        parts = [extra] + [p for p in parts if p != extra]
+    elif extra not in parts:
+        parts = parts + [extra]
+    os.environ["PATH"] = os.pathsep.join(parts)
 
 
 class Bootstrap:
@@ -139,7 +151,7 @@ class Bootstrap:
                     break
             else:
                 self._pip = []
-            _ensure_path(os.path.expanduser("~/.local/bin"))
+            _ensure_path(os.path.expanduser("~/.local/bin"), prepend=False)
         return self._pip or None
 
     def _apt(self) -> bool:
@@ -165,7 +177,7 @@ class Bootstrap:
             self.log.info(f"  pip install {name} …")
             rc, _ = _sh(self._pip_cmd() + ["install", "--quiet", "--user",
                                            PIP_INSTALL[name]], timeout=600)
-            _ensure_path(os.path.expanduser("~/.local/bin"))
+            _ensure_path(os.path.expanduser("~/.local/bin"), prepend=False)
             if rc == 0 and _have(name):
                 self.log.ok(f"  installed {name}")
                 return True

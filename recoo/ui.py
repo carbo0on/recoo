@@ -4,9 +4,20 @@ Stdlib only — no external dependency so recoo stays easy to run.
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(s: str) -> str:
+    """Strip ANSI colour codes for file/non-tty output."""
+    return _ANSI.sub("", s)
 
 
 class C:
@@ -52,11 +63,40 @@ class Logger:
             C.disable()
         self.threshold = self.LEVELS.get(level, 20)
         self._start = time.time()
+        self._fh = None  # optional persistent log file handle
+
+    def attach_file(self, path) -> None:
+        """Mirror every message (full fidelity, no colour) to a log file.
+
+        The file always records debug-level detail regardless of the
+        console threshold, so you can ``tail -f`` it to watch a long or
+        seemingly-stuck run from another terminal.
+        """
+        try:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = p.open("a", buffering=1)  # line-buffered
+            self._fh.write(f"\n{'='*60}\n"
+                           f"# recoo run @ "
+                           f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                           f"{'='*60}\n")
+        except Exception:
+            self._fh = None
+
+    def _to_file(self, tag: str, msg: str) -> None:
+        if self._fh is None:
+            return
+        try:
+            self._fh.write(f"{self._stamp()} {tag:<5} {_plain(msg)}\n")
+        except Exception:
+            pass
 
     def _stamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
 
     def _emit(self, level: str, tag: str, color: str, msg: str) -> None:
+        # The file gets every message in full; the console respects the level.
+        self._to_file(tag, msg)
         if self.LEVELS[level] < self.threshold:
             return
         stream = sys.stderr if level in ("warn", "error") else sys.stdout
@@ -80,6 +120,11 @@ class Logger:
         self._emit("error", "[x]", C.RED, msg)
 
     def phase(self, name: str, desc: str) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.write(f"\n--- {name}  {desc} ---\n")
+            except Exception:
+                pass
         if self.LEVELS["info"] < self.threshold:
             return
         line = "─" * 58

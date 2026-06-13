@@ -33,12 +33,28 @@ def dispatch(name: str, engine: "Engine", tool: "Tool") -> None:
 
 # --- post-stage plumbing (called unconditionally by the engine) ----------
 
+def _append_new(path, candidates) -> int:
+    """Append only lines not already in ``path``. Returns count added."""
+    existing = set(read_lines(path))
+    new = [c for c in dedup(candidates) if c not in existing]
+    if new:
+        with path.open("a") as fh:
+            fh.write("\n".join(new) + "\n")
+    return len(new)
+
+
 def derive_live(engine: "Engine") -> None:
-    """Build hosts/live.txt from httpx JSON output (one URL per line)."""
-    httpx_json = engine.ws.path("hosts/httpx.json")
-    if count_lines(httpx_json) == 0:
-        return
+    """Build hosts/live.txt from httpx JSON output (one URL per line).
+
+    If httpx produced nothing usable (it errored, was the wrong binary, or
+    the target throttled it), fall back to seeding live hosts from the
+    resolved subdomains (https://) so the crawl/screenshot/JS stages still
+    have input instead of the whole downstream pipeline being skipped.
+    """
     live = engine.ws.artifact("live")
+    anew(live, [])  # ensure the file exists
+
+    httpx_json = engine.ws.path("hosts/httpx.json")
     urls = []
     for line in read_lines(httpx_json):
         try:
@@ -48,14 +64,27 @@ def derive_live(engine: "Engine") -> None:
         url = obj.get("url") or obj.get("input")
         if url:
             urls.append(url)
-    added = anew(live, [])  # ensure file exists
+
     if urls:
-        existing = set(read_lines(live))
-        new = [u for u in dedup(urls) if u not in existing]
-        if new:
-            with live.open("a") as fh:
-                fh.write("\n".join(new) + "\n")
+        _append_new(live, urls)
         engine.log.ok(f"derived {count_lines(live)} live hosts -> hosts/live.txt")
+        return
+
+    # Fallback: no usable httpx output. Seed from resolved hosts so the rest
+    # of the pipeline can run (better a few dead hosts than skipping it all).
+    if count_lines(live) > 0:
+        return
+    resolved = engine.ws.artifact("resolved")
+    hosts = read_lines(resolved)
+    if not hosts:
+        return
+    seeded = [h if h.startswith(("http://", "https://")) else f"https://{h}"
+              for h in hosts]
+    n = _append_new(live, seeded)
+    engine.log.warn(
+        f"httpx produced no live hosts — falling back to {n} resolved "
+        f"host(s) as https:// so crawl/screenshots/JS can still run "
+        f"(check that the real 'httpx' is on PATH, not the python one)")
 
 
 def process_urls(engine: "Engine", tool: "Tool" = None) -> None:

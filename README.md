@@ -239,8 +239,24 @@ python3 recoo.py --list-wordlists  # مسارات الورد ليست لكل م�
 │   └── injection/{sqli,xss,ssrf,...}.txt
 ├── monitoring/   snapshots + diffs over time
 ├── report.html   تقرير HTML منظّم (يُنشأ تلقائيًا)
-└── .recoo/       run.json metadata
+└── .recoo/       run.json metadata + recoo.log (سجل حيّ كامل)
 ```
+
+### متابعة التشغيل الطويل / Follow a long run
+
+كل تشغيل يكتب سجلاً حيّاً كاملاً (حتى تفاصيل debug) إلى
+`<output>/.recoo/recoo.log`. لمعرفة ما يجري في الخلفية إذا تأخّرت أداة
+صامتة، تابِعه من نافذة طرفية ثانية:
+
+```bash
+tail -f recoo-output/.recoo/recoo.log
+
+# أو راقب نمو ملفات المخرجات لحظياً
+watch -n 2 'wc -l recoo-output/subs/all.txt recoo-output/urls/all.txt 2>/dev/null'
+```
+
+كل أداة لها مهلة (`timeout`، افتراضي 1800ث) تقتلها تلقائياً إن تعلّقت؛
+قلّلها بـ `--timeout 600`.
 
 ---
 
