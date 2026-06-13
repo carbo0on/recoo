@@ -16,7 +16,7 @@ settings:
   wordlist_size: short                # micro | short | full
   # Optional: pin a different file per size for any role.
   # wordlist_sizes:
-  #   content: {micro: onelistforallmicro.txt, short: onelistforall.txt, full: onelistforall_big.txt}
+  #   content: {micro: onelistforallmicro.txt, short: onelistforallshort.txt, full: onelistforall_big.txt}
   #   dns:     {micro: dict/dns_short.txt, short: dict/subdomains_short.txt, full: dict/subdomains_long.txt}
   #   params:  {short: dict/parameters_short.txt, full: dict/parameters_long.txt}
   #   perms:   {short: dict/permutations_short.txt, full: dict/permutations_long.txt}

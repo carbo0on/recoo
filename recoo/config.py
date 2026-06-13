@@ -42,7 +42,7 @@ DEFAULT_SETTINGS: Dict[str, object] = {
     "wordlist_size": "short",          # micro | short | full
     "wordlist_sizes": {
         "content": {"micro": "onelistforallmicro.txt",
-                    "short": "onelistforall.txt",
+                    "short": "onelistforallshort.txt",
                     "full":  "onelistforall_big.txt"},
         "dns":     {"micro": "dict/dns_short.txt",
                     "short": "dict/subdomains_short.txt",

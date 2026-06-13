@@ -149,7 +149,7 @@ findings/injection/{xss,ssrf,lfi,rce,ssti,redirect,idor}.txt
 | المستوى | المصدر في OneListForAll | يُربط بنمط |
 |---|---|---|
 | `micro` | `onelistforallmicro.txt` + قوائم `*_short` صغيرة | `fast` |
-| `short` | `onelistforall.txt` + `dict/*_short.txt` | `medium` |
+| `short` | `onelistforallshort.txt` + `dict/*_short.txt` | `medium` |
 | `full` | `onelistforall_big.txt` + `dict/*_long.txt` | `deep` |
 
 التحميل (يضع الملفات في `wordlists/OneListForAll/` + resolvers من trickest):

@@ -4,7 +4,7 @@
 #
 # Maps OneListForAll's natural sizes onto recoo's three tiers:
 #   micro  -> tiny curated lists (pairs with --profile fast)
-#   short  -> balanced *_short category lists + onelistforall.txt (medium)
+#   short  -> balanced *_short category lists + onelistforallshort.txt (medium)
 #   full   -> the big *_long lists (deep) — some are generated locally and
 #             not stored in the repo; those are reported if unavailable.
 #
@@ -55,7 +55,7 @@ case "$TIER" in
            dict/permutations_short.txt) ;;
   short)
     files=(onelistforallmicro.txt
-           onelistforall.txt
+           onelistforallshort.txt
            dict/subdomains_short.txt
            dict/dns_short.txt
            dict/directories_short.txt
@@ -64,7 +64,7 @@ case "$TIER" in
            dict/permutations_short.txt) ;;
   full|all)
     files=(onelistforallmicro.txt
-           onelistforall.txt
+           onelistforallshort.txt
            onelistforall_big.txt
            dict/subdomains_short.txt
            dict/subdomains_long.txt
