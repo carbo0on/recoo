@@ -12,6 +12,7 @@ Responsibilities
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -19,7 +20,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import builtins as bi
-from .config import Config, wordlist_path
+from .config import (WORDLIST_ROLES, Config, resolve_wordlist,
+                     wordlist_path)
 from .tool import ARTIFACTS, Tool
 from .ui import C, Logger
 from .workspace import Workspace, anew, count_lines, dedup, read_lines
@@ -43,6 +45,8 @@ class Engine:
         self.dry_run = dry_run
         self.result = RunResult()
         self._which_cache: Dict[str, bool] = {}
+        self._httpx_resolved = False
+        self._httpx_path: Optional[str] = None
 
     # ---- helpers ---------------------------------------------------------
 
@@ -50,6 +54,57 @@ class Engine:
         if binary not in self._which_cache:
             self._which_cache[binary] = shutil.which(binary) is not None
         return self._which_cache[binary]
+
+    # PD-httpx-specific flags absent from the similarly-named python httpx
+    # client; used to tell the two apart.
+    _PD_HTTPX_MARKERS = ("-tech-detect", "-status-code", "-web-server",
+                         "-content-length", "-favicon", "-jarm", "-cdn",
+                         "-probe", "-title", "-silent")
+
+    def _is_pd_httpx(self, path: str) -> bool:
+        """Heuristically confirm ``path`` is ProjectDiscovery httpx and not
+        the python 'httpx' HTTP-client CLI that shares the name."""
+        try:
+            h = subprocess.run([path, "-h"], capture_output=True,
+                               text=True, timeout=20)
+        except Exception:
+            return False
+        blob = (h.stdout + h.stderr).lower()
+        return sum(m in blob for m in self._PD_HTTPX_MARKERS) >= 3
+
+    def httpx_bin(self) -> Optional[str]:
+        """Resolve a usable ProjectDiscovery httpx binary, or None.
+
+        Detects the common gotcha where the python ``httpx`` client shadows
+        ProjectDiscovery's httpx on PATH, and transparently falls back to a
+        correct binary found in the usual Go install locations. Cached;
+        warns once with remediation when only the wrong one is present.
+        """
+        if self._httpx_resolved:
+            return self._httpx_path
+        self._httpx_resolved = True
+        on_path = shutil.which("httpx")
+        candidates: List[str] = []
+        if on_path:
+            candidates.append(on_path)
+        for d in (os.path.expanduser("~/go/bin"), "/root/go/bin",
+                  "/usr/local/bin", "/usr/bin", "/opt/go/bin"):
+            p = os.path.join(d, "httpx")
+            if p not in candidates and os.path.isfile(p) and os.access(p, os.X_OK):
+                candidates.append(p)
+        for p in candidates:
+            if self._is_pd_httpx(p):
+                self._httpx_path = p
+                if on_path and os.path.realpath(p) != os.path.realpath(on_path):
+                    self.log.warn(f"'httpx' on PATH is not ProjectDiscovery's "
+                                  f"— using {p} instead")
+                return p
+        if on_path:
+            self.log.warn("'httpx' on PATH is NOT ProjectDiscovery httpx (looks "
+                          "like the python httpx client). Install the real one: "
+                          "go install github.com/projectdiscovery/httpx/cmd/httpx@latest")
+        self._httpx_path = None
+        return None
 
     def _wordlist(self, role: str) -> str:
         return wordlist_path(self.cfg.settings, role)
@@ -76,6 +131,8 @@ class Engine:
         mapping["item"] = item or ""
         mapping["output"] = str(output) if output else ""
         mapping["input"] = str(inp) if inp else ""
+        if "{httpx}" in template:
+            mapping["httpx"] = self.httpx_bin() or "httpx"
         try:
             return template.format(**mapping)
         except KeyError as e:
@@ -98,6 +155,10 @@ class Engine:
         missing = [b for b in tool.bins if not self._have(b)]
         if missing:
             return f"missing binary: {', '.join(missing)}"
+        # httpx on PATH may be the python client, not ProjectDiscovery's.
+        if "httpx" in tool.bins and self.httpx_bin() is None:
+            return ("httpx is not ProjectDiscovery's (python httpx client?); "
+                    "go install .../httpx/cmd/httpx@latest")
         for role in ("content", "dns", "params", "perms"):
             if f"{{wordlist_{role}}}" in tool.cmd:
                 wl = self._wordlist(role)
@@ -111,6 +172,15 @@ class Engine:
         return None
 
     # ---- running a single tool ------------------------------------------
+
+    def _log_tail(self, logp: Path, default: str = "non-zero exit") -> str:
+        """Return the last meaningful stderr line for a failed tool."""
+        try:
+            lines = [ln.strip() for ln in logp.read_text(errors="ignore").splitlines()
+                     if ln.strip()]
+        except Exception:
+            return default
+        return (lines[-1][:160] if lines else default)
 
     def _run_cmd(self, cmd: str, timeout: int) -> int:
         if self.dry_run:
@@ -160,14 +230,19 @@ class Engine:
 
         self.log.info(f"run  {C.BOLD}{tool.name}{C.RESET}  "
                       f"{C.DIM}{tool.desc}{C.RESET}")
+        logp = self.ws.path(f".recoo/logs/{tool.name}.log")
         produced: List[Path] = []
         start = time.time()
         rc_any_ok = False
         for idx, item in enumerate(items, 1):
             out = self._output_path(tool, item)
             cmd = self._render(tool.cmd, item, out, inp)
+            # Always capture stderr to a per-tool log for diagnostics
+            # instead of discarding it; keep stdout->output for stdout tools.
             if tool.stdout and out:
-                cmd = f"{cmd} >> {_q(str(out))} 2>/dev/null"
+                cmd = f"{cmd} >> {_q(str(out))} 2>> {_q(str(logp))}"
+            else:
+                cmd = f"{cmd} 2>> {_q(str(logp))}"
             if tool.mode == "each" and len(items) > 1:
                 self.log.debug(f"  [{idx}/{len(items)}] {item}")
             rc = self._run_cmd(cmd, timeout)
@@ -175,15 +250,31 @@ class Engine:
             if out:
                 produced.append(out)
 
-        if not rc_any_ok and not self.dry_run:
-            self.result.failed[tool.name] = "non-zero exit"
         self.result.ran.append(tool.name)
         self._merge(tool, produced)
 
         dur = int(time.time() - start)
+        n = 0
+        if tool.output:
+            if tool.mode == "each":
+                n = sum(count_lines(p) for p in produced)
+            else:
+                main_out = self._output_path(tool, None)
+                n = count_lines(main_out) if main_out else 0
+
+        # A non-zero exit is only a real failure when the tool produced
+        # nothing usable. Many tools (nuclei with no findings, piped
+        # commands, scanners) exit non-zero yet still yield results —
+        # flagging those as "failed" is noise, so we keep the output and
+        # only warn. Genuine failures are recorded with their stderr tail.
+        if not rc_any_ok and not self.dry_run:
+            if n > 0:
+                self.log.warn(f"{tool.name} exited non-zero but produced "
+                              f"{n} line(s) — keeping output")
+            else:
+                self.result.failed[tool.name] = self._log_tail(logp)
+
         if tool.output and not self.dry_run:
-            main_out = self._output_path(tool, None if tool.mode != "each" else "")
-            n = sum(count_lines(p) for p in produced) if tool.mode == "each" else count_lines(main_out) if main_out else 0
             self.log.ok(f"done {tool.name} · {n} lines · {dur}s")
 
     def _collect_outputs(self, tool: Tool) -> List[Path]:
@@ -206,7 +297,30 @@ class Engine:
 
     # ---- stage orchestration --------------------------------------------
 
+    def _report_wordlist_fallbacks(self) -> None:
+        """Warn once up-front when a requested wordlist tier is missing and
+        a smaller one will be used (or none is available)."""
+        if self.dry_run:
+            return
+        requested = self.cfg.settings.get("wordlist_size", "short")
+        roles_used = set()
+        for t in self.cfg.tools:
+            if not t.enabled:
+                continue
+            for role in WORDLIST_ROLES:
+                if f"{{wordlist_{role}}}" in t.cmd:
+                    roles_used.add(role)
+        for role in sorted(roles_used):
+            path, tier = resolve_wordlist(self.cfg.settings, role)
+            if not path or not Path(path).exists():
+                self.log.warn(f"wordlist[{role}]: no tier available "
+                              f"(run ./download-wordlists.sh {requested})")
+            elif tier and tier != requested:
+                self.log.warn(f"wordlist[{role}]: '{requested}' tier missing "
+                              f"-> using '{tier}' ({Path(path).name})")
+
     def run(self) -> RunResult:
+        self._report_wordlist_fallbacks()
         stages = self.cfg.stages_in_order()
         for stage in stages:
             tools = [t for t in self.cfg.tools if t.stage == stage]

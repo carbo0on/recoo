@@ -209,7 +209,7 @@ tools:
     bin: httpx
     input: resolved
     cmd: >-
-      httpx -l {input} -silent -sc -title -tech-detect -location
+      {httpx} -l {input} -silent -sc -title -tech-detect -location
       -cdn -ip -web-server -json
     output: "hosts/httpx.json"
     enabled: true

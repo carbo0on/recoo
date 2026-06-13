@@ -34,28 +34,59 @@ def dispatch(name: str, engine: "Engine", tool: "Tool") -> None:
 # --- post-stage plumbing (called unconditionally by the engine) ----------
 
 def derive_live(engine: "Engine") -> None:
-    """Build hosts/live.txt from httpx JSON output (one URL per line)."""
-    httpx_json = engine.ws.path("hosts/httpx.json")
-    if count_lines(httpx_json) == 0:
-        return
+    """Build hosts/live.txt from httpx JSON output (one URL per line).
+
+    Self-healing: if httpx produced nothing usable (no output, or output
+    that is not valid JSON because the wrong ``httpx`` binary is on PATH),
+    fall back to the resolved-host list over https so the live-dependent
+    stages (screenshots, crawl, params, nuclei) still run instead of being
+    skipped wholesale.
+    """
     live = engine.ws.artifact("live")
+    httpx_json = engine.ws.path("hosts/httpx.json")
     urls = []
+    n_lines = 0
+    bad_json = False
     for line in read_lines(httpx_json):
+        n_lines += 1
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
+            bad_json = True
             continue
         url = obj.get("url") or obj.get("input")
         if url:
             urls.append(url)
-    added = anew(live, [])  # ensure file exists
+
     if urls:
+        anew(live, [])  # ensure the file exists
         existing = set(read_lines(live))
         new = [u for u in dedup(urls) if u not in existing]
         if new:
             with live.open("a") as fh:
                 fh.write("\n".join(new) + "\n")
         engine.log.ok(f"derived {count_lines(live)} live hosts -> hosts/live.txt")
+        return
+
+    # --- nothing usable from httpx: explain, then self-heal -------------
+    if n_lines and bad_json:
+        engine.log.warn("httpx output is not valid JSON — is ProjectDiscovery "
+                        "httpx installed (not the python 'httpx' client)?")
+    _fallback_live_from_resolved(engine, live)
+
+
+def _fallback_live_from_resolved(engine: "Engine", live) -> None:
+    """Populate hosts/live.txt from resolved hosts (https://) as a fallback."""
+    if count_lines(live) > 0:
+        return
+    hosts = read_lines(engine.ws.artifact("resolved"))
+    derived = dedup(h if "://" in h else f"https://{h}"
+                    for h in hosts if h.strip())
+    if not derived:
+        return
+    live.write_text("\n".join(derived) + "\n")
+    engine.log.warn(f"no live hosts from httpx; falling back to {len(derived)} "
+                    f"resolved host(s) over https -> hosts/live.txt")
 
 
 def process_urls(engine: "Engine", tool: "Tool" = None) -> None:
@@ -216,15 +247,17 @@ def gf_patterns(engine: "Engine", tool: "Tool") -> None:
 
 def api_docs(engine: "Engine", tool: "Tool") -> None:
     """Probe each live host for common API/doc/secret paths via httpx."""
-    if not engine._have("httpx"):
-        engine.log.warn("httpx not installed; skipping API path probe")
+    hx = engine.httpx_bin()
+    if not hx:
+        engine.log.warn("ProjectDiscovery httpx not available; "
+                        "skipping API path probe")
         return
     live = engine.ws.artifact("live")
     if count_lines(live) == 0:
         return
     paths = engine.cfg.settings.get("api_paths", [])
     out = engine.ws.path("findings/api_surface.txt")
-    cmd = (f"httpx -silent -mc 200,401,403 -sc -title "
+    cmd = (f"{_q(hx)} -silent -mc 200,401,403 -sc -title "
            f"-l {_q(str(live))} -path {_q(','.join(paths))} "
            f">> {_q(str(out))} 2>/dev/null")
     engine._run_cmd(cmd, tool.timeout or int(engine.cfg.settings.get("timeout", 1800)))
@@ -260,8 +293,10 @@ def secrets_grep(engine: "Engine", tool: "Tool") -> None:
 
 def source_maps(engine: "Engine", tool: "Tool") -> None:
     """Detect exposed .map files for live JS (high-value source recovery)."""
-    if not engine._have("httpx"):
-        engine.log.warn("httpx not installed; skipping source-map check")
+    hx = engine.httpx_bin()
+    if not hx:
+        engine.log.warn("ProjectDiscovery httpx not available; "
+                        "skipping source-map check")
         return
     js = engine.ws.artifact("js_urls")
     if count_lines(js) == 0:
@@ -270,7 +305,7 @@ def source_maps(engine: "Engine", tool: "Tool") -> None:
     tmp = engine.ws.path("js/.map_candidates.txt")
     tmp.write_text("\n".join(maps) + "\n")
     out = engine.ws.path("findings/source_maps.txt")
-    cmd = (f"httpx -silent -mc 200 -l {_q(str(tmp))} "
+    cmd = (f"{_q(hx)} -silent -mc 200 -l {_q(str(tmp))} "
            f">> {_q(str(out))} 2>/dev/null")
     engine._run_cmd(cmd, tool.timeout or 900)
     engine.log.ok(f"source maps: {count_lines(out)} exposed -> "

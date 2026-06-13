@@ -143,7 +143,9 @@ def _arrow_ui(tools) -> bool:
             tty.setraw(fd)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write("\n")
+        # Erase the selector grid so the run banner starts on a clean screen.
+        sys.stdout.write(f"\033[{prev_lines[0]}A\033[J")
+        sys.stdout.flush()
 
 
 # --------------------------------------------------------------------- #

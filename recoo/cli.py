@@ -159,7 +159,7 @@ def _print_wordlists(cfg: Config) -> None:
     for role in ("content", "dns", "params", "perms"):
         print(f"  {C.BOLD}{role}{C.RESET}")
         for size in ("micro", "short", "full"):
-            p = wordlist_path(s, role, size)
+            p = wordlist_path(s, role, size, fallback=False)
             exists = p and Path(p).exists()
             mark = f"{C.GREEN}✓{C.RESET}" if exists else f"{C.GREY}✗{C.RESET}"
             arrow = f"{C.CYAN}❯{C.RESET}" if size == active else " "
@@ -171,7 +171,9 @@ def _print_wordlists(cfg: Config) -> None:
              else f"{C.GREY}✗{C.RESET}")
     print(f"\n  {C.BOLD}resolvers{C.RESET}\n      {rmark} {C.DIM}{res}{C.RESET}")
     print(f"\n  {C.DIM}✓ present · ✗ missing · "
-          f"fetch with: ./download-wordlists.sh {active}{C.RESET}\n")
+          f"fetch with: ./download-wordlists.sh {active}{C.RESET}")
+    print(f"  {C.DIM}a missing tier auto-falls back to a smaller one that "
+          f"exists, so runs never abort on it.{C.RESET}\n")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -300,7 +302,8 @@ def _summary(log: Logger, ws: Workspace, result) -> None:
           f"skipped {C.YELLOW}{len(result.skipped)}{C.RESET} · "
           f"failed {C.RED}{len(result.failed)}{C.RESET}")
     if result.failed:
-        print(f"  {C.RED}failed:{C.RESET} {', '.join(result.failed)}")
+        print(f"  {C.RED}failed:{C.RESET} {', '.join(result.failed)} "
+              f"{C.DIM}(see {ws.root}/.recoo/logs/){C.RESET}")
     findings = ws.root / "findings"
     hits = [f.name for f in sorted(findings.glob('*')) if f.is_file()
             and count_lines(f) > 0]
