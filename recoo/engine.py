@@ -12,6 +12,7 @@ Responsibilities
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -44,6 +45,8 @@ class Engine:
         self.dry_run = dry_run
         self.result = RunResult()
         self._which_cache: Dict[str, bool] = {}
+        self._httpx_resolved = False
+        self._httpx_path: Optional[str] = None
 
     # ---- helpers ---------------------------------------------------------
 
@@ -51,6 +54,57 @@ class Engine:
         if binary not in self._which_cache:
             self._which_cache[binary] = shutil.which(binary) is not None
         return self._which_cache[binary]
+
+    # PD-httpx-specific flags absent from the similarly-named python httpx
+    # client; used to tell the two apart.
+    _PD_HTTPX_MARKERS = ("-tech-detect", "-status-code", "-web-server",
+                         "-content-length", "-favicon", "-jarm", "-cdn",
+                         "-probe", "-title", "-silent")
+
+    def _is_pd_httpx(self, path: str) -> bool:
+        """Heuristically confirm ``path`` is ProjectDiscovery httpx and not
+        the python 'httpx' HTTP-client CLI that shares the name."""
+        try:
+            h = subprocess.run([path, "-h"], capture_output=True,
+                               text=True, timeout=20)
+        except Exception:
+            return False
+        blob = (h.stdout + h.stderr).lower()
+        return sum(m in blob for m in self._PD_HTTPX_MARKERS) >= 3
+
+    def httpx_bin(self) -> Optional[str]:
+        """Resolve a usable ProjectDiscovery httpx binary, or None.
+
+        Detects the common gotcha where the python ``httpx`` client shadows
+        ProjectDiscovery's httpx on PATH, and transparently falls back to a
+        correct binary found in the usual Go install locations. Cached;
+        warns once with remediation when only the wrong one is present.
+        """
+        if self._httpx_resolved:
+            return self._httpx_path
+        self._httpx_resolved = True
+        on_path = shutil.which("httpx")
+        candidates: List[str] = []
+        if on_path:
+            candidates.append(on_path)
+        for d in (os.path.expanduser("~/go/bin"), "/root/go/bin",
+                  "/usr/local/bin", "/usr/bin", "/opt/go/bin"):
+            p = os.path.join(d, "httpx")
+            if p not in candidates and os.path.isfile(p) and os.access(p, os.X_OK):
+                candidates.append(p)
+        for p in candidates:
+            if self._is_pd_httpx(p):
+                self._httpx_path = p
+                if on_path and os.path.realpath(p) != os.path.realpath(on_path):
+                    self.log.warn(f"'httpx' on PATH is not ProjectDiscovery's "
+                                  f"— using {p} instead")
+                return p
+        if on_path:
+            self.log.warn("'httpx' on PATH is NOT ProjectDiscovery httpx (looks "
+                          "like the python httpx client). Install the real one: "
+                          "go install github.com/projectdiscovery/httpx/cmd/httpx@latest")
+        self._httpx_path = None
+        return None
 
     def _wordlist(self, role: str) -> str:
         return wordlist_path(self.cfg.settings, role)
@@ -77,6 +131,8 @@ class Engine:
         mapping["item"] = item or ""
         mapping["output"] = str(output) if output else ""
         mapping["input"] = str(inp) if inp else ""
+        if "{httpx}" in template:
+            mapping["httpx"] = self.httpx_bin() or "httpx"
         try:
             return template.format(**mapping)
         except KeyError as e:
@@ -99,6 +155,10 @@ class Engine:
         missing = [b for b in tool.bins if not self._have(b)]
         if missing:
             return f"missing binary: {', '.join(missing)}"
+        # httpx on PATH may be the python client, not ProjectDiscovery's.
+        if "httpx" in tool.bins and self.httpx_bin() is None:
+            return ("httpx is not ProjectDiscovery's (python httpx client?); "
+                    "go install .../httpx/cmd/httpx@latest")
         for role in ("content", "dns", "params", "perms"):
             if f"{{wordlist_{role}}}" in tool.cmd:
                 wl = self._wordlist(role)

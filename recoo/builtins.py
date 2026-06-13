@@ -247,15 +247,17 @@ def gf_patterns(engine: "Engine", tool: "Tool") -> None:
 
 def api_docs(engine: "Engine", tool: "Tool") -> None:
     """Probe each live host for common API/doc/secret paths via httpx."""
-    if not engine._have("httpx"):
-        engine.log.warn("httpx not installed; skipping API path probe")
+    hx = engine.httpx_bin()
+    if not hx:
+        engine.log.warn("ProjectDiscovery httpx not available; "
+                        "skipping API path probe")
         return
     live = engine.ws.artifact("live")
     if count_lines(live) == 0:
         return
     paths = engine.cfg.settings.get("api_paths", [])
     out = engine.ws.path("findings/api_surface.txt")
-    cmd = (f"httpx -silent -mc 200,401,403 -sc -title "
+    cmd = (f"{_q(hx)} -silent -mc 200,401,403 -sc -title "
            f"-l {_q(str(live))} -path {_q(','.join(paths))} "
            f">> {_q(str(out))} 2>/dev/null")
     engine._run_cmd(cmd, tool.timeout or int(engine.cfg.settings.get("timeout", 1800)))
@@ -291,8 +293,10 @@ def secrets_grep(engine: "Engine", tool: "Tool") -> None:
 
 def source_maps(engine: "Engine", tool: "Tool") -> None:
     """Detect exposed .map files for live JS (high-value source recovery)."""
-    if not engine._have("httpx"):
-        engine.log.warn("httpx not installed; skipping source-map check")
+    hx = engine.httpx_bin()
+    if not hx:
+        engine.log.warn("ProjectDiscovery httpx not available; "
+                        "skipping source-map check")
         return
     js = engine.ws.artifact("js_urls")
     if count_lines(js) == 0:
@@ -301,7 +305,7 @@ def source_maps(engine: "Engine", tool: "Tool") -> None:
     tmp = engine.ws.path("js/.map_candidates.txt")
     tmp.write_text("\n".join(maps) + "\n")
     out = engine.ws.path("findings/source_maps.txt")
-    cmd = (f"httpx -silent -mc 200 -l {_q(str(tmp))} "
+    cmd = (f"{_q(hx)} -silent -mc 200 -l {_q(str(tmp))} "
            f">> {_q(str(out))} 2>/dev/null")
     engine._run_cmd(cmd, tool.timeout or 900)
     engine.log.ok(f"source maps: {count_lines(out)} exposed -> "
