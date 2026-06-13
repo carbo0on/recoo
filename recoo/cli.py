@@ -246,6 +246,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ws.init()
     ws.seed_from(domains)
 
+    # Persistent, full-fidelity log — `tail -f` it to watch a long run.
+    log_file = ws.root / ".recoo" / "recoo.log"
+    log.attach_file(log_file)
+    log.info(f"live log  : {log_file}  {C.DIM}(tail -f to follow){C.RESET}")
+
     enabled = [t.name for t in cfg.tools if t.enabled]
     log.info(f"targets   : {len(domains)} "
              f"({', '.join(domains[:3])}{'…' if len(domains) > 3 else ''})")
@@ -318,6 +323,9 @@ def _summary(log: Logger, ws: Workspace, result) -> None:
     rep = ws.root / "report.html"
     if rep.exists():
         print(f"  {C.GREEN}report:{C.RESET} {rep}")
+    logf = ws.root / ".recoo" / "recoo.log"
+    if logf.exists():
+        print(f"  {C.GREEN}log:{C.RESET} {logf}")
     print(f"\n  results in {C.BOLD}{ws.root}{C.RESET}\n")
 
 
