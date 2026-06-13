@@ -8,12 +8,23 @@ settings:
   threads: 50
   timeout: 1800                       # per-tool timeout in seconds
 
-  # Wordlists / resolvers (point these at your own copies).
+  # --- Wordlists: OneListForAll (six2dez) ----------------------------
+  # Fetch with:  ./download-wordlists.sh short   (or micro | full)
+  # The {wordlist_*} placeholders resolve from wordlists_dir + the tier.
   resolvers: wordlists/resolvers.txt
-  wordlist_dns: wordlists/dns.txt
-  wordlist_content: wordlists/content.txt
-  wordlist_params: wordlists/params.txt
-  wordlist_perms: wordlists/permutations.txt
+  wordlists_dir: wordlists/OneListForAll
+  wordlist_size: short                # micro | short | full
+  # Optional: pin a different file per size for any role.
+  # wordlist_sizes:
+  #   content: {micro: onelistforallmicro.txt, short: onelistforall.txt, full: onelistforall_big.txt}
+  #   dns:     {micro: dict/dns_short.txt, short: dict/subdomains_short.txt, full: dict/subdomains_long.txt}
+  #   params:  {short: dict/parameters_short.txt, full: dict/parameters_long.txt}
+  #   perms:   {short: dict/permutations_short.txt, full: dict/permutations_long.txt}
+  # Explicit per-role overrides (win over the tiers; leave empty to use them).
+  wordlist_dns: ""
+  wordlist_content: ""
+  wordlist_params: ""
+  wordlist_perms: ""
 
   # API tokens used by certain tools (leave blank to skip those).
   github_token: ""

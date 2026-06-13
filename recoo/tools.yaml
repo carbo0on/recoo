@@ -560,6 +560,7 @@ profiles:
 
   fast:
     desc: "Quick footprint: passive subs, resolve, probe, historical URLs, triage"
+    wordlist_size: micro
     tools:
       - subfinder
       - crtsh
@@ -574,6 +575,7 @@ profiles:
 
   medium:
     desc: "Balanced: + takeovers, crawling, JS analysis, params, APIs, screenshots, nuclei"
+    wordlist_size: short
     tools:
       - subfinder
       - crtsh
@@ -598,6 +600,7 @@ profiles:
 
   deep:
     desc: "Maximum surface: everything incl. brute, permutations, ports, cloud, OSINT (slow)"
+    wordlist_size: full
     tools:
       - asnmap
       - subfinder

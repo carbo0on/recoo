@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import builtins as bi
-from .config import Config
+from .config import Config, wordlist_path
 from .tool import ARTIFACTS, Tool
 from .ui import C, Logger
 from .workspace import Workspace, anew, count_lines, dedup, read_lines
@@ -51,6 +51,9 @@ class Engine:
             self._which_cache[binary] = shutil.which(binary) is not None
         return self._which_cache[binary]
 
+    def _wordlist(self, role: str) -> str:
+        return wordlist_path(self.cfg.settings, role)
+
     def _vars(self) -> Dict[str, str]:
         s = self.cfg.settings
         v = {
@@ -58,10 +61,10 @@ class Engine:
             "domain": self.single_domain,
             "threads": str(s.get("threads", 40)),
             "resolvers": str(s.get("resolvers", "")),
-            "wordlist_dns": str(s.get("wordlist_dns", "")),
-            "wordlist_content": str(s.get("wordlist_content", "")),
-            "wordlist_params": str(s.get("wordlist_params", "")),
-            "wordlist_perms": str(s.get("wordlist_perms", "")),
+            "wordlist_dns": self._wordlist("dns"),
+            "wordlist_content": self._wordlist("content"),
+            "wordlist_params": self._wordlist("params"),
+            "wordlist_perms": self._wordlist("perms"),
             "github_token": str(s.get("github_token", "")),
         }
         v.update({k: str(val) for k, val in (s.get("vars") or {}).items()})
@@ -95,6 +98,12 @@ class Engine:
         missing = [b for b in tool.bins if not self._have(b)]
         if missing:
             return f"missing binary: {', '.join(missing)}"
+        for role in ("content", "dns", "params", "perms"):
+            if f"{{wordlist_{role}}}" in tool.cmd:
+                wl = self._wordlist(role)
+                if wl and not Path(wl).exists():
+                    return (f"wordlist missing: {wl} "
+                            f"(run ./download-wordlists.sh)")
         if tool.input:
             src = self.ws.artifact(tool.input)
             if count_lines(src) == 0:

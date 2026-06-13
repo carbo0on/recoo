@@ -6,6 +6,7 @@ output/
 # local config + wordlists (keep your own out of git)
 config.yaml
 wordlists/*.txt
+wordlists/OneListForAll/
 
 # python
 __pycache__/
