@@ -137,14 +137,62 @@ def load(user_config: Optional[str] = None,
     return Config(settings=settings, tools=tools, profiles=profiles)
 
 
+# Tier sizes, smallest -> largest. Used for graceful fallback.
+WORDLIST_TIERS = ("micro", "short", "full")
+
+
+def _fallback_order(size: str) -> List[str]:
+    """Tiers to try, in order: the requested one, then progressively
+    smaller (graceful degradation), then larger as a last resort."""
+    if size not in WORDLIST_TIERS:
+        size = "short"
+    i = WORDLIST_TIERS.index(size)
+    smaller = list(reversed(WORDLIST_TIERS[:i]))   # next-smaller first
+    larger = list(WORDLIST_TIERS[i + 1:])
+    return [size] + smaller + larger
+
+
+def resolve_wordlist(settings: Dict[str, object], role: str,
+                     size: Optional[str] = None) -> tuple:
+    """Resolve a {wordlist_<role>} path, returning ``(path, tier_used)``.
+
+    If the requested tier's file is missing on disk, fall back to the
+    next smaller tier that exists (then larger), so a run never aborts
+    just because the biggest list was not downloaded. ``tier_used`` is
+    the tier actually selected (or ``None`` for an explicit override or
+    when nothing exists).
+    """
+    explicit = settings.get(f"wordlist_{role}")
+    if explicit:
+        return str(explicit), None
+    sizes = (settings.get("wordlist_sizes") or {}).get(role, {})
+    if not sizes:
+        return "", None
+    base = Path(settings.get("wordlists_dir", "wordlists"))
+    requested = size or settings.get("wordlist_size", "short")
+    for tier in _fallback_order(requested):
+        rel = sizes.get(tier)
+        if rel and (base / rel).exists():
+            return str(base / rel), tier
+    # Nothing on disk: return the literal requested path so existence
+    # checks (and the user-facing "missing wordlist" hint) still fire.
+    rel = sizes.get(requested) or sizes.get("short") or next(iter(sizes.values()), "")
+    return (str(base / rel) if rel else ""), None
+
+
 def wordlist_path(settings: Dict[str, object], role: str,
-                  size: Optional[str] = None) -> str:
+                  size: Optional[str] = None, fallback: bool = True) -> str:
     """Resolve a {wordlist_<role>} path.
 
     An explicit per-role override (settings['wordlist_<role>']) wins;
     otherwise build it from wordlists_dir + the size tier (defaulting to
-    the active settings['wordlist_size']).
+    the active settings['wordlist_size']). With ``fallback`` (the default)
+    a missing tier degrades to a smaller one that exists; pass
+    ``fallback=False`` to get the exact literal path for a tier (used by
+    --list-wordlists, which must report each tier truthfully).
     """
+    if fallback:
+        return resolve_wordlist(settings, role, size)[0]
     explicit = settings.get(f"wordlist_{role}")
     if explicit:
         return str(explicit)

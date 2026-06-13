@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import builtins as bi
-from .config import Config, wordlist_path
+from .config import (WORDLIST_ROLES, Config, resolve_wordlist,
+                     wordlist_path)
 from .tool import ARTIFACTS, Tool
 from .ui import C, Logger
 from .workspace import Workspace, anew, count_lines, dedup, read_lines
@@ -112,6 +113,15 @@ class Engine:
 
     # ---- running a single tool ------------------------------------------
 
+    def _log_tail(self, logp: Path, default: str = "non-zero exit") -> str:
+        """Return the last meaningful stderr line for a failed tool."""
+        try:
+            lines = [ln.strip() for ln in logp.read_text(errors="ignore").splitlines()
+                     if ln.strip()]
+        except Exception:
+            return default
+        return (lines[-1][:160] if lines else default)
+
     def _run_cmd(self, cmd: str, timeout: int) -> int:
         if self.dry_run:
             self.log.info(f"{C.DIM}dry-run:{C.RESET} {cmd}")
@@ -160,14 +170,19 @@ class Engine:
 
         self.log.info(f"run  {C.BOLD}{tool.name}{C.RESET}  "
                       f"{C.DIM}{tool.desc}{C.RESET}")
+        logp = self.ws.path(f".recoo/logs/{tool.name}.log")
         produced: List[Path] = []
         start = time.time()
         rc_any_ok = False
         for idx, item in enumerate(items, 1):
             out = self._output_path(tool, item)
             cmd = self._render(tool.cmd, item, out, inp)
+            # Always capture stderr to a per-tool log for diagnostics
+            # instead of discarding it; keep stdout->output for stdout tools.
             if tool.stdout and out:
-                cmd = f"{cmd} >> {_q(str(out))} 2>/dev/null"
+                cmd = f"{cmd} >> {_q(str(out))} 2>> {_q(str(logp))}"
+            else:
+                cmd = f"{cmd} 2>> {_q(str(logp))}"
             if tool.mode == "each" and len(items) > 1:
                 self.log.debug(f"  [{idx}/{len(items)}] {item}")
             rc = self._run_cmd(cmd, timeout)
@@ -175,15 +190,31 @@ class Engine:
             if out:
                 produced.append(out)
 
-        if not rc_any_ok and not self.dry_run:
-            self.result.failed[tool.name] = "non-zero exit"
         self.result.ran.append(tool.name)
         self._merge(tool, produced)
 
         dur = int(time.time() - start)
+        n = 0
+        if tool.output:
+            if tool.mode == "each":
+                n = sum(count_lines(p) for p in produced)
+            else:
+                main_out = self._output_path(tool, None)
+                n = count_lines(main_out) if main_out else 0
+
+        # A non-zero exit is only a real failure when the tool produced
+        # nothing usable. Many tools (nuclei with no findings, piped
+        # commands, scanners) exit non-zero yet still yield results —
+        # flagging those as "failed" is noise, so we keep the output and
+        # only warn. Genuine failures are recorded with their stderr tail.
+        if not rc_any_ok and not self.dry_run:
+            if n > 0:
+                self.log.warn(f"{tool.name} exited non-zero but produced "
+                              f"{n} line(s) — keeping output")
+            else:
+                self.result.failed[tool.name] = self._log_tail(logp)
+
         if tool.output and not self.dry_run:
-            main_out = self._output_path(tool, None if tool.mode != "each" else "")
-            n = sum(count_lines(p) for p in produced) if tool.mode == "each" else count_lines(main_out) if main_out else 0
             self.log.ok(f"done {tool.name} · {n} lines · {dur}s")
 
     def _collect_outputs(self, tool: Tool) -> List[Path]:
@@ -206,7 +237,30 @@ class Engine:
 
     # ---- stage orchestration --------------------------------------------
 
+    def _report_wordlist_fallbacks(self) -> None:
+        """Warn once up-front when a requested wordlist tier is missing and
+        a smaller one will be used (or none is available)."""
+        if self.dry_run:
+            return
+        requested = self.cfg.settings.get("wordlist_size", "short")
+        roles_used = set()
+        for t in self.cfg.tools:
+            if not t.enabled:
+                continue
+            for role in WORDLIST_ROLES:
+                if f"{{wordlist_{role}}}" in t.cmd:
+                    roles_used.add(role)
+        for role in sorted(roles_used):
+            path, tier = resolve_wordlist(self.cfg.settings, role)
+            if not path or not Path(path).exists():
+                self.log.warn(f"wordlist[{role}]: no tier available "
+                              f"(run ./download-wordlists.sh {requested})")
+            elif tier and tier != requested:
+                self.log.warn(f"wordlist[{role}]: '{requested}' tier missing "
+                              f"-> using '{tier}' ({Path(path).name})")
+
     def run(self) -> RunResult:
+        self._report_wordlist_fallbacks()
         stages = self.cfg.stages_in_order()
         for stage in stages:
             tools = [t for t in self.cfg.tools if t.stage == stage]

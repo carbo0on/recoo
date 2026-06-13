@@ -30,16 +30,16 @@ class C:
             setattr(cls, name, "")
 
 
-BANNER = r"""
+BANNER_LINES = [
+    r"   ____  ___  _________  ____",
+    r"  / __ \/ _ \/ ___/ __ \/ __ \ ",
+    r" / /_/ /  __/ /__/ /_/ / /_/ /",
+    r" \____/\___/\___/\____/\____/",
+]
 
-   ____  ___  _________  ____
-  / __ \/ _ \/ ___/ __ \/ __ \
- / /_/ /  __/ /__/ /_/ / /_/ /
- \____/\___/\___/\____/\____/
-
- recoo · modular recon automation · v{ver}
- made by cataract
-"""
+# Cyan -> blue 256-colour gradient applied line by line to the logo.
+_GRADIENT = ("\033[38;5;51m", "\033[38;5;45m",
+             "\033[38;5;39m", "\033[38;5;33m")
 
 
 class Logger:
@@ -92,7 +92,16 @@ class Logger:
     def banner(self, version: str) -> None:
         if self.LEVELS["info"] < self.threshold:
             return
-        sys.stdout.write(C.CYAN + BANNER.format(ver=version) + C.RESET + "\n")
+        out = ["\n"]
+        grad = _GRADIENT if C.RESET else ("",) * len(BANNER_LINES)
+        for i, line in enumerate(BANNER_LINES):
+            out.append(f"{grad[i % len(grad)]}{line}{C.RESET}\n")
+        out.append(f"\n {C.BOLD}recoo{C.RESET} {C.DIM}·{C.RESET} "
+                   f"{C.CYAN}modular recon automation{C.RESET} "
+                   f"{C.DIM}·{C.RESET} {C.GREY}v{version}{C.RESET}\n")
+        out.append(f" {C.DIM}made by cataract · for authorized testing only"
+                   f"{C.RESET}\n")
+        sys.stdout.write("".join(out))
         sys.stdout.flush()
 
     def elapsed(self) -> str:
